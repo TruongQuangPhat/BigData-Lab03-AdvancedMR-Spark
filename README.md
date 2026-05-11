@@ -133,9 +133,24 @@ Month,State,MedianVariety
 
 ---
 
-## SCRIPT XÓA VÀ BUILD NHANH TOÀN BỘ TASKS
+## QUY TRÌNH TỰ ĐỘNG HÓA (BUILD & RUN ALL)
 
-Bạn có thể lưu đoạn mã sau thành file `build_and_run_all.sh` tại thư mục gốc của project để tự động hóa toàn bộ quy trình trên.
+Dự án cung cấp một script shell giúp tự động hóa toàn bộ các bước: Dọn dẹp môi trường cũ -> Biên dịch mã nguồn -> Đóng gói JAR -> Chạy MapReduce trên Hadoop -> Trích xuất kết quả CSV cuối cùng.
+
+### Bước 1: Cấp quyền thực thi
+Mặc định các file mới tạo sẽ không có quyền chạy. Bạn cần cấp quyền thực thi cho script bằng lệnh sau (chỉ cần làm 1 lần duy nhất):
+```bash
+chmod +x build_and_run_all.sh
+```
+
+### Bước 2: Thực thi script
+Để bắt đầu quá trình xử lý toàn bộ các Task, hãy chạy lệnh:
+```bash
+./build_and_run_all.sh
+```
+
+<details>
+<summary><b>Xem chi tiết nội dung file build_and_run_all.sh</b></summary>
 
 ```bash
 #!/bin/bash
@@ -174,3 +189,5 @@ cd ../..
 
 echo "HOÀN TẤT BUILD VÀ CHẠY TOÀN BỘ PROJECT!"
 ```
+
+</details>
