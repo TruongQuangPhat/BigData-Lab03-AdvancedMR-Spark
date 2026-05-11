@@ -4,6 +4,7 @@ classes/
 *.jar
 
 *.csv
+!data/Amazon_Sale_Report.csv
 
 target/
 project/target/
