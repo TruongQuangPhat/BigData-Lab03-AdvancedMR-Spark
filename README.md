@@ -1,234 +1,176 @@
 # LAB 2 - ADVANCED MAPREDUCE PROBLEMS
+
 ## Hướng dẫn Build và Chạy
 
 ### YÊU CẦU HỆ THỐNG
-- Hadoop 3.x (pseudo-distributed mode)
-- Scala 2.12.x
-- SBT (Scala Build Tool) hoặc có thể compile thủ công
+- Hadoop 3.x (Pseudo-distributed mode)
+- Scala 2.12.x hoặc 2.13.x
 - Java 8 hoặc 11
+- Môi trường Linux / WSL (Windows Subsystem for Linux)
+
+---
+
+## CHUẨN BỊ MÔI TRƯỜNG VÀ DỮ LIỆU TRÊN HDFS
+
+Tất cả các lệnh dưới đây được thực thi tại thư mục gốc của dự án. 
+Đảm bảo bạn đang đứng tại thư mục gốc trước khi bắt đầu.
+
+1. Khởi động Hadoop:
+```bash
+start-dfs.sh
+start-yarn.sh
+```
+
+2. Kiểm tra các tiến trình (Đảm bảo có NameNode, DataNode, NodeManager, ResourceManager):
+```bash
+jps
+```
+
+3. Tạo thư mục input trên HDFS và tải dữ liệu từ thư mục `data/` lên:
+```bash
+hadoop fs -mkdir -p /lab2/input/
+hadoop fs -put data/Amazon_Sale_Report.csv /lab2/input/
+```
 
 ---
 
 ## TASK 1-1: SLIDING WINDOW
 
-### Cách 1: Build bằng SBT (Khuyến nghị)
+### Cấu trúc package: `lab2.task11.SlidingWindowJob`
 
+1. Di chuyển vào thư mục mã nguồn và thiết lập môi trường:
 ```bash
-cd Task_1-1
-
-# Tạo thư mục project nếu chưa có
-mkdir -p project
-
-# Tạo file plugins.sbt
-echo 'addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.15.0")' > project/plugins.sbt
-
-# Build JAR file
-sbt clean assembly
-
-# File JAR sẽ được tạo tại: target/scala-2.12/SlidingWindowJob-assembly-1.0.jar
+cd src/Task_1-1
+export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
 ```
 
-### Cách 2: Compile thủ công bằng scalac
-
+2. Biên dịch và đóng gói thành file JAR:
 ```bash
-cd Task_1-1
-
-# Tìm classpath của Hadoop
-export HADOOP_CLASSPATH=$(hadoop classpath)
-
-# Compile
-scalac -classpath $HADOOP_CLASSPATH -d . SlidingWindowJob.scala
-
-# Tạo JAR
-jar -cvf SlidingWindowJob.jar lab2/
-
-# Hoặc sử dụng Maven để package
+mkdir -p classes
+rm -rf classes/*
+rm -f SlidingWindowJob.jar
+scalac -classpath "$HADOOP_CLASSPATH" -d classes SlidingWindowJob.scala
+jar -cvf SlidingWindowJob.jar -C classes .
 ```
 
-### Chạy trên Hadoop
-
+3. Chạy Job trên Hadoop:
 ```bash
-# Upload dữ liệu lên HDFS (nếu chưa có)
-hadoop fs -mkdir -p /user/$(whoami)/lab2/input
-hadoop fs -put Amazon_Sale_Report.csv /user/$(whoami)/lab2/input/
+hadoop jar SlidingWindowJob.jar lab2.task11.SlidingWindowJob /lab2/input/Amazon_Sale_Report.csv /lab2/output/task1-1
+```
 
-# Chạy job
-hadoop jar Task_1-1/target/scala-2.12/SlidingWindowJob-assembly-1.0.jar \
-  lab2.task11.SlidingWindowJob \
-  /user/$(whoami)/lab2/input/Amazon_Sale_Report.csv \
-  /user/$(whoami)/lab2/output/task1-1
+4. Lấy kết quả về máy và dọn dẹp header thừa:
+```bash
+rm -f Task_1-1.csv
+hadoop fs -getmerge /lab2/output/task1-1 Task_1-1.csv
+sed -i '2,${/^State,TargetDate/d}' Task_1-1.csv
+```
 
-# Xem kết quả
-hadoop fs -cat /user/$(whoami)/lab2/output/task1-1/part-* | head -20
-
-# Tải về máy local
-hadoop fs -getmerge /user/$(whoami)/lab2/output/task1-1 Task_1-1.csv
-
-# Xóa header nếu có nhiều file part (giữ lại header đầu tiên)
-# sed -i '2,${/^State,TargetDate,MostBoughtSize,Count$/d}' Task_1-1.csv
+5. Quay lại thư mục gốc:
+```bash
+cd ../..
 ```
 
 ---
 
 ## TASK 1-2: MEDIAN VARIETY
 
-### Build bằng SBT
+### Cấu trúc package: `lab2.task12.MedianVarietyJob`
+*Lưu ý: Task này sử dụng kỹ thuật Job Chaining (Nối 2 Jobs).*
 
+1. Di chuyển vào thư mục mã nguồn và thiết lập môi trường:
 ```bash
-cd Task_1-2
-
-# Tạo thư mục project
-mkdir -p project
-echo 'addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.15.0")' > project/plugins.sbt
-
-# Build
-sbt clean assembly
-
-# File JAR: target/scala-2.12/MedianVarietyJob-assembly-1.0.jar
+cd src/Task_1-2
+export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
 ```
 
-### Chạy trên Hadoop (Job Chaining)
-
+2. Biên dịch và đóng gói thành file JAR:
 ```bash
-# Chạy job (bao gồm cả Job 1 và Job 2)
-hadoop jar Task_1-2/target/scala-2.12/MedianVarietyJob-assembly-1.0.jar \
-  lab2.task12.MedianVarietyJob \
-  /user/$(whoami)/lab2/input/Amazon_Sale_Report.csv \
-  /user/$(whoami)/lab2/temp/task1-2 \
-  /user/$(whoami)/lab2/output/task1-2
+mkdir -p classes
+rm -rf classes/*
+rm -f MedianVarietyJob.jar
+scalac -classpath "$HADOOP_CLASSPATH" -d classes MedianVarietyJob.scala
+jar -cvf MedianVarietyJob.jar -C classes .
+```
 
-# Xem kết quả
-hadoop fs -cat /user/$(whoami)/lab2/output/task1-2/part-* | head -20
+3. Chạy Job trên Hadoop (Cần truyền đủ 3 tham số):
+```bash
+hadoop jar MedianVarietyJob.jar lab2.task12.MedianVarietyJob /lab2/input/Amazon_Sale_Report.csv /lab2/output/task1-2-temp /lab2/output/task1-2
+```
 
-# Tải về
-hadoop fs -getmerge /user/$(whoami)/lab2/output/task1-2 Task_1-2.csv
+4. Lấy kết quả về máy và dọn dẹp header thừa:
+```bash
+rm -f Task_1-2.csv
+hadoop fs -getmerge /lab2/output/task1-2 Task_1-2.csv
+sed -i '2,${/^Month,State/d}' Task_1-2.csv
+```
+
+5. Quay lại thư mục gốc:
+```bash
+cd ../..
 ```
 
 ---
 
-## GIẢI THÍCH THAM SỐ
+## KIỂM TRA ĐỊNH DẠNG KẾT QUẢ
 
-### Task 1-1: SlidingWindowJob
-```
-<input path>   : Đường dẫn file CSV trên HDFS
-<output path>  : Đường dẫn output trên HDFS
-```
+Các file kết quả sẽ được lưu tại `src/Task_1-1/Task_1-1.csv` và `src/Task_1-2/Task_1-2.csv`.
 
-### Task 1-2: MedianVarietyJob
-```
-<input path>   : Đường dẫn file CSV trên HDFS
-<temp path>    : Đường dẫn tạm cho output Job 1
-<output path>  : Đường dẫn output cuối cùng (Job 2)
-```
-
----
-
-## XỬ LÝ LỖI THƯỜNG GẶP
-
-### 1. Lỗi "ClassNotFoundException"
-- Kiểm tra lại JAR file đã build đúng chưa
-- Đảm bảo package name đúng: `lab2.task11` hoặc `lab2.task12`
-
-### 2. Lỗi "Permission denied" trên HDFS
-```bash
-# Tạo thư mục và set quyền
-hadoop fs -mkdir -p /user/$(whoami)/lab2
-hadoop fs -chmod -R 755 /user/$(whoami)/lab2
-```
-
-### 3. Output directory already exists
-```bash
-# Xóa output cũ
-hadoop fs -rm -r /user/$(whoami)/lab2/output/task1-1
-hadoop fs -rm -r /user/$(whoami)/lab2/output/task1-2
-hadoop fs -rm -r /user/$(whoami)/lab2/temp/task1-2
-```
-
-### 4. File CSV có nhiều part-* files
-```bash
-# Merge tất cả parts thành 1 file duy nhất
-hadoop fs -getmerge /user/$(whoami)/lab2/output/task1-1 Task_1-1.csv
-
-# Nếu có nhiều headers, xóa các header thừa (giữ lại dòng đầu)
-awk 'NR==1 || !/^State,TargetDate/' Task_1-1.csv > Task_1-1_clean.csv
-mv Task_1-1_clean.csv Task_1-1.csv
-```
-
----
-
-## KIỂM TRA KẾT QUẢ
-
-### Task 1-1 Output Format:
-```
+### Task 1-1 Output Format (`Task_1-1.csv`):
+```csv
 State,TargetDate,MostBoughtSize,Count
-MAHARASHTRA,05-01-22,M,245
-KARNATAKA,05-01-22,L,189
+ANDAMAN & NICOBAR,04-02-22,M,1
+ANDHRA PRADESH,04-02-22,M,41
 ...
 ```
 
-### Task 1-2 Output Format:
-```
+### Task 1-2 Output Format (`Task_1-2.csv`):
+```csv
 Month,State,MedianVariety
+2022-03,ANDHRA PRADESH,1.0
 2022-04,MAHARASHTRA,3.5
-2022-04,KARNATAKA,4.0
 ...
 ```
 
 ---
 
-## LƯU Ý QUAN TRỌNG
+## SCRIPT XÓA VÀ BUILD NHANH TOÀN BỘ TASKS
 
-1. **Đảm bảo Hadoop đã chạy**:
-```bash
-# Kiểm tra Hadoop services
-jps
-# Phải thấy: NameNode, DataNode, ResourceManager, NodeManager
-```
-
-2. **Kiểm tra file input**:
-```bash
-hadoop fs -ls /user/$(whoami)/lab2/input/
-hadoop fs -cat /user/$(whoami)/lab2/input/Amazon_Sale_Report.csv | head -5
-```
-
-3. **Monitor job progress**:
-- Truy cập Web UI: http://localhost:8088 (YARN ResourceManager)
-- Hoặc: http://localhost:9870 (HDFS NameNode)
-
-4. **Debug**:
-```bash
-# Xem logs
-yarn logs -applicationId <application_id>
-
-# Hoặc xem trực tiếp từ container logs
-```
-
----
-
-## BUILD NHANH (TẤT CẢ TASKS)
+Bạn có thể lưu đoạn mã sau thành file `build_and_run_all.sh` tại thư mục gốc của project để tự động hóa toàn bộ quy trình trên.
 
 ```bash
 #!/bin/bash
 
-# Build Task 1-1
-cd Task_1-1
-mkdir -p project
-echo 'addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.15.0")' > project/plugins.sbt
-sbt clean assembly
-cd ..
+echo "--- PREPARING HDFS ---"
 
-# Build Task 1-2
-cd Task_1-2
-mkdir -p project
-echo 'addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.15.0")' > project/plugins.sbt
-sbt clean assembly
-cd ..
+hadoop fs -mkdir -p /lab2/input/
 
-echo "Build completed!"
-```
+hadoop fs -test -e /lab2/input/Amazon_Sale_Report.csv || hadoop fs -put data/Amazon_Sale_Report.csv /lab2/input/
 
-Lưu script trên thành `build_all.sh`, chmod +x và chạy:
-```bash
-chmod +x build_all.sh
-./build_all.sh
+export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
+
+echo "--- BUILDING & RUNNING TASK 1-1 ---"
+
+cd src/Task_1-1
+mkdir -p classes && rm -rf classes/* && rm -f SlidingWindowJob.jar
+scalac -classpath "$HADOOP_CLASSPATH" -d classes SlidingWindowJob.scala
+jar -cvf SlidingWindowJob.jar -C classes .
+hadoop jar SlidingWindowJob.jar lab2.task11.SlidingWindowJob /lab2/input/Amazon_Sale_Report.csv /lab2/output/task1-1
+rm -f Task_1-1.csv
+hadoop fs -getmerge /lab2/output/task1-1 Task_1-1.csv
+sed -i '2,${/^State,TargetDate/d}' Task_1-1.csv
+cd ../..
+
+echo "--- BUILDING & RUNNING TASK 1-2 ---"
+
+cd src/Task_1-2
+mkdir -p classes && rm -rf classes/* && rm -f MedianVarietyJob.jar
+scalac -classpath "$HADOOP_CLASSPATH" -d classes MedianVarietyJob.scala
+jar -cvf MedianVarietyJob.jar -C classes .
+hadoop jar MedianVarietyJob.jar lab2.task12.MedianVarietyJob /lab2/input/Amazon_Sale_Report.csv /lab2/output/task1-2-temp /lab2/output/task1-2
+rm -f Task_1-2.csv
+hadoop fs -getmerge /lab2/output/task1-2 Task_1-2.csv
+sed -i '2,${/^Month,State/d}' Task_1-2.csv
+cd ../..
+
+echo "HOÀN TẤT BUILD VÀ CHẠY TOÀN BỘ PROJECT!"
 ```
