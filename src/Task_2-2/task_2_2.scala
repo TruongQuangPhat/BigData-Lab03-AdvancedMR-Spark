@@ -259,10 +259,18 @@ object Task22 {
     }
 
     val filesStatus = fs.listStatus(stagingDir)
-    val partFile = filesStatus.find(_.getPath.getName.startsWith("part-"))
     
-    partFile.foreach { f =>
-      fs.rename(f.getPath, outputFile)
+    var partFilePath: Path = null
+    var i = 0
+    while (i < filesStatus.length) {
+      if (filesStatus(i).getPath.getName.startsWith("part-")) {
+        partFilePath = filesStatus(i).getPath
+      }
+      i += 1
+    }
+    
+    if (partFilePath != null) {
+      fs.rename(partFilePath, outputFile)
     }
 
     // Xoá thư mục staging
