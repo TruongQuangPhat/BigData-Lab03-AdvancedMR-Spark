@@ -111,9 +111,40 @@ cd ../..
 
 ---
 
+## TASK 2-2: POPULATION STANDARD DEVIATION WITH DYNAMIC PERCENTILES (SPARK)
+
+### Cấu trúc package: `Task22`
+
+1. Di chuyển vào thư mục mã nguồn:
+```bash
+cd src/Task_2-2
+```
+
+2. Cấu hình classpath và biên dịch:
+```bash
+export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
+mkdir -p classes && rm -rf classes/* && rm -f Task_2_2.jar
+scalac -classpath "$SPARK_CLASSPATH" -d classes task_2_2.scala
+jar -cvf Task_2_2.jar -C classes .
+```
+
+3. Submit Job lên Spark và xuất Log:
+```bash
+spark-submit --class Task22 --master local[*] Task_2_2.jar 2>&1 | tee task_2-2_stats.log
+```
+
+4. Lấy kết quả Parquet về máy:
+```bash
+rm -f Task_2-2.parquet
+hadoop fs -get /lab2/output/Task_2-2.parquet ./Task_2-2.parquet
+cd ../..
+```
+
+---
+
 ## KIỂM TRA ĐỊNH DẠNG KẾT QUẢ
 
-Các file kết quả sẽ được lưu tại `src/Task_1-1/Task_1-1.csv` và `src/Task_1-2/Task_1-2.csv`.
+Các file kết quả sẽ được lưu tại `src/Task_1-1/Task_1-1.csv`, `src/Task_1-2/Task_1-2.csv` và `Task_2-2.parquet`.
 
 ### Task 1-1 Output Format (`Task_1-1.csv`):
 ```csv
@@ -130,6 +161,12 @@ Month,State,MedianVariety
 2022-04,MAHARASHTRA,3.5
 ...
 ```
+
+### Task 2-2 Output Format (`Task_2-2.parquet`):
+Định dạng file xuất ra là **Parquet** dạng Wide format, bao gồm 15 cột siêu chi tiết:
+`SKU, Month, total_orders, threshold_p80_approx, threshold_p90_approx, orders_p80_approx, orders_p90_approx, stddev_p80_approx, stddev_p90_approx, threshold_p80_exact, threshold_p90_exact, orders_p80_exact, orders_p90_exact, stddev_p80_exact, stddev_p90_exact`
+
+*(Bạn có thể sử dụng file `check_Task_2-2.ipynb` bằng Python/Pandas có sẵn trong dự án để kiểm tra nội dung file Parquet này).*
 
 ---
 
@@ -185,6 +222,21 @@ hadoop jar MedianVarietyJob.jar lab2.task12.MedianVarietyJob /lab2/input/Amazon_
 rm -f Task_1-2.csv
 hadoop fs -getmerge /lab2/output/task1-2 Task_1-2.csv
 sed -i '2,${/^Month,State/d}' Task_1-2.csv
+echo "--- BUILDING & RUNNING TASK 2-2 (SPARK) ---"
+
+cd src/Task_2-2
+mkdir -p classes && rm -rf classes/* && rm -f Task_2_2.jar
+export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
+scalac -classpath "$SPARK_CLASSPATH" -d classes task_2_2.scala
+jar -cvf Task_2_2.jar -C classes .
+
+spark-submit \
+  --class Task22 \
+  --master local[*] \
+  Task_2_2.jar 2>&1 | tee task_2-2_stats.log
+
+rm -f Task_2-2.parquet
+hadoop fs -get /lab2/output/Task_2-2.parquet ./Task_2-2.parquet
 cd ../..
 
 echo "HOÀN TẤT BUILD VÀ CHẠY TOÀN BỘ PROJECT!"
