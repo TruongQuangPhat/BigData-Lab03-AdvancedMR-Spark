@@ -5,6 +5,7 @@ classes/
 
 *.csv
 !data/Amazon_Sale_Report.csv
+!results/
 
 target/
 project/target/
