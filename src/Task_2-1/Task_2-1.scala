@@ -3,11 +3,12 @@ package lab3.task21
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 object SparkTask21 {
   def main(args: Array[String]): Unit = {
     if (args.length < 2) {
-      System.err.println("Usage: SparkTask21 <input_csv> <output_dir>")
+      System.err.println("Usage: SparkTask21 <input_csv> <output_parquet_file>")
       System.exit(1)
     }
 
@@ -104,11 +105,43 @@ object SparkTask21 {
     resultDf.explain(true)
     println("=== End of plan ===\n")
 
+    val outputFile = new Path(outputPath)
+    val stagingDir = new Path(outputPath + "_staging")
+    val fs = outputFile.getFileSystem(spark.sparkContext.hadoopConfiguration)
+
+    if (fs.exists(stagingDir)) {
+      fs.delete(stagingDir, true)
+    }
+    if (fs.exists(outputFile)) {
+      fs.delete(outputFile, true)
+    }
+
     resultDf
       .coalesce(1)
       .write
       .mode("overwrite")
-      .parquet(outputPath)
+      .parquet(stagingDir.toString)
+
+    val statuses = fs.listStatus(stagingDir)
+    var partFile: Path = null
+    var i = 0
+    while (i < statuses.length && partFile == null) {
+      val path = statuses(i).getPath
+      val name = path.getName
+      if (name.startsWith("part-") && name.endsWith(".parquet")) {
+        partFile = path
+      }
+      i += 1
+    }
+
+    if (partFile == null) {
+      throw new RuntimeException("No part-*.parquet file found in staging output.")
+    }
+
+    fs.rename(partFile, outputFile)
+    fs.delete(stagingDir, true)
+
+    println(s"Single Parquet file written to: $outputPath")
 
     spark.stop()
   }

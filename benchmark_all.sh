@@ -15,6 +15,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$PROJECT_ROOT/logs"
 
 INPUT_PATH="/lab03/input/Amazon_Sale_Report.csv"
+SPARK_INPUT_PATH="hdfs://localhost:9000/lab03/input/Amazon_Sale_Report.csv"
+SPARK_TASK21_OUTPUT_PATH="hdfs://localhost:9000/lab03/output/Task_2-1.parquet"
 
 mkdir -p "$LOG_DIR"
 
@@ -248,7 +250,7 @@ benchmark_task_2_1() {
   local SRC_DIR="$PROJECT_ROOT/src/Task_2-1"
   local JAR_NAME="SparkTask21.jar"
   local MAIN_CLASS="lab3.task21.SparkTask21"
-  local OUTPUT_PATH="/lab03/output/task2-1"
+  local OUTPUT_PATH="/lab03/output/Task_2-1.parquet"
   local TMP_FILE="$LOG_DIR/task2_1_times.tmp"
   local LOG_FILE="$LOG_DIR/Task_2-1.json"
 
@@ -276,6 +278,7 @@ benchmark_task_2_1() {
     echo "--- $TASK_NAME | Run $i/$RUNS ---"
 
     hadoop fs -rm -r -f "$OUTPUT_PATH" > /dev/null 2>&1 || true
+    hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" > /dev/null 2>&1 || true
 
     START_NS=$(date +%s%N)
 
@@ -283,8 +286,8 @@ benchmark_task_2_1() {
       --class "$MAIN_CLASS" \
       --master local[*] \
       "$SRC_DIR/$JAR_NAME" \
-      "$INPUT_PATH" \
-      "$OUTPUT_PATH"
+      "$SPARK_INPUT_PATH" \
+      "$SPARK_TASK21_OUTPUT_PATH"
 
     END_NS=$(date +%s%N)
 
@@ -303,8 +306,8 @@ PY
     "$TASK_NAME" \
     "$MAIN_CLASS" \
     "Apache Spark" \
-    "$INPUT_PATH" \
-    "$OUTPUT_PATH" \
+    "$SPARK_INPUT_PATH" \
+    "$SPARK_TASK21_OUTPUT_PATH" \
     "$TMP_FILE" \
     "$LOG_FILE"
 

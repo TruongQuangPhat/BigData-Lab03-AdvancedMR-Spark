@@ -11,6 +11,9 @@ mkdir -p results
 hadoop fs -mkdir -p /lab03/input/
 hadoop fs -put -f data/Amazon_Sale_Report.csv /lab03/input/
 
+SPARK_INPUT_PATH="hdfs://localhost:9000/lab03/input/Amazon_Sale_Report.csv"
+SPARK_TASK21_OUTPUT_PATH="hdfs://localhost:9000/lab03/output/Task_2-1.parquet"
+
 export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
 export SPARK_CLASSPATH=$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')
 
@@ -77,18 +80,19 @@ rm -f SparkTask21.jar
 scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
 jar -cvf SparkTask21.jar -C classes lab3
 
-hadoop fs -rm -r -f /lab03/output/task2-1 > /dev/null 2>&1 || true
+hadoop fs -rm -r -f /lab03/output/Task_2-1.parquet > /dev/null 2>&1 || true
+hadoop fs -rm -r -f /lab03/output/Task_2-1.parquet_staging > /dev/null 2>&1 || true
 
 spark-submit \
   --class lab3.task21.SparkTask21 \
   --master local[*] \
   SparkTask21.jar \
-  /lab03/input/Amazon_Sale_Report.csv \
-  /lab03/output/task2-1
+  "$SPARK_INPUT_PATH" \
+  "$SPARK_TASK21_OUTPUT_PATH"
 
 mkdir -p ../../results
 rm -rf ../../results/Task_2-1.parquet
-hadoop fs -get /lab03/output/task2-1 ../../results/Task_2-1.parquet
+hadoop fs -get /lab03/output/Task_2-1.parquet ../../results/Task_2-1.parquet
 
 cd ../..
 

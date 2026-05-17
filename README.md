@@ -245,8 +245,8 @@ cd ../..
 - Package: `lab3.task21`
 - Main class: `lab3.task21.SparkTask21`
 - Input ví dụ: `/app/data.csv`
-- Output ví dụ: `/app/output_task21`
-- Output format: Parquet
+- Output ví dụ: `/lab03/output/Task_2-1.parquet`
+- Output format: single Parquet file
 
 Task này dùng Spark DataFrame API để tính, với mỗi city, tỷ lệ các order `Cancelled` và `Standard` thỏa đồng thời:
 
@@ -293,8 +293,8 @@ spark-submit \
   --class lab3.task21.SparkTask21 \
   --master local[*] \
   SparkTask21.jar \
-  /app/data.csv \
-  /app/output_task21
+  hdfs://localhost:9000/lab03/input/Amazon_Sale_Report.csv \
+  hdfs://localhost:9000/lab03/output/Task_2-1.parquet
 ```
 
 ### 4. Quay lại thư mục gốc
@@ -388,7 +388,7 @@ Month,State,MedianVariety
 
 ### Task 2-1 Output Format
 
-Định dạng file xuất ra là Parquet, gồm 2 cột:
+Định dạng xuất ra là một file Parquet duy nhất, gồm 2 cột:
 
 ```text
 City,
