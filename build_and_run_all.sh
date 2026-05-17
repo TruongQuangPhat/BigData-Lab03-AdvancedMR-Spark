@@ -59,9 +59,11 @@ hadoop fs -put -f data/Amazon_Sale_Report.csv /lab03/input/
 
 SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
 SPARK_TASK21_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-1.parquet"
+SPARK_TASK22_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-2.parquet"
 
 echo "Spark input path: $SPARK_INPUT_PATH"
 echo "Spark Task 2-1 output path: $SPARK_TASK21_OUTPUT_PATH"
+echo "Spark Task 2-2 output path: $SPARK_TASK22_OUTPUT_PATH"
 
 export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
 export SPARK_CLASSPATH=$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')
@@ -183,10 +185,54 @@ echo "Đã lưu kết quả Task_2-1 tại: results/Task_2-1.parquet"
 cd ../..
 
 echo "============================================================"
+echo "BUILD & RUN TASK 2-2: DYNAMIC PERCENTILE STDDEV"
+echo "============================================================"
+
+cd src/Task_2-2
+
+echo "--- Đang biên dịch và đóng gói Task_2-2 ---"
+
+mkdir -p classes
+rm -rf classes/*
+rm -f SparkTask22.jar
+
+scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
+jar -cvf SparkTask22.jar -C classes .
+
+echo "--- Đang xóa output HDFS cũ của Task_2-2 nếu tồn tại ---"
+
+hadoop fs -rm -r -f /lab03/output/Task_2-2.parquet > /dev/null 2>&1 || true
+hadoop fs -rm -r -f /lab03/output/Task_2-2.parquet_staging > /dev/null 2>&1 || true
+
+echo "--- Đang chạy Spark job cho Task_2-2 ---"
+
+mkdir -p ../../logs
+spark-submit \
+  --class Task22 \
+  --master local[*] \
+  SparkTask22.jar \
+  "$SPARK_INPUT_PATH" \
+  "$SPARK_TASK22_OUTPUT_PATH" 2>&1 | tee ../../logs/task_2-2_stats.log
+
+echo "--- Đang lấy kết quả Task_2-2 từ HDFS về thư mục results/ ---"
+
+mkdir -p ../../results
+rm -rf ../../results/Task_2-2.parquet
+
+hadoop fs -get /lab03/output/Task_2-2.parquet ../../results/Task_2-2.parquet
+
+echo "Đã lưu kết quả Task_2-2 tại: results/Task_2-2.parquet"
+echo "Đã lưu log chạy Task_2-2 tại: logs/task_2-2_stats.log"
+
+cd ../..
+
+echo "============================================================"
 echo "HOÀN TẤT BUILD VÀ CHẠY TOÀN BỘ PROJECT"
 echo "============================================================"
 echo "Kết quả được lưu tại:"
 echo "- results/Task_1-1.csv"
 echo "- results/Task_1-2.csv"
 echo "- results/Task_2-1.parquet"
+echo "- results/Task_2-2.parquet"
+echo "- logs/task_2-2_stats.log"
 echo "============================================================"

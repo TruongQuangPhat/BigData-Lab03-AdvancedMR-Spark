@@ -36,7 +36,9 @@ BigData-Lab03-AdvancedMR-Spark/
 │   └── Task_2-2.parquet
 ├── logs/
 │   ├── Task_1-1.json
-│   └── Task_1-2.json
+│   ├── Task_1-2.json
+│   ├── Task_2-1.json
+│   └── task_2-2_stats.log
 ├── src/
 │   ├── Task_1-1/
 │   │   └── Task_1-1.scala
@@ -328,26 +330,34 @@ cd src/Task_2-2
 
 ```bash
 export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
+export HADOOP_CLASSPATH=$(hadoop classpath)
 
 mkdir -p classes
 rm -rf classes/*
-rm -f Task_2_2.jar
+rm -f SparkTask22.jar
 
-scalac -classpath "$SPARK_CLASSPATH" -d classes Task_2-2.scala
-jar -cvf Task_2_2.jar -C classes .
+scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
+jar -cvf SparkTask22.jar -C classes .
 ```
 
 ### 3. Submit job lên Spark và xuất log
 
 ```bash
-spark-submit --class Task22 --master local[*] Task_2_2.jar 2>&1 | tee task_2-2_stats.log
+mkdir -p ../../logs
+spark-submit \
+  --class Task22 \
+  --master local[*] \
+  SparkTask22.jar \
+  "$SPARK_INPUT_PATH" \
+  "$SPARK_TASK22_OUTPUT_PATH" 2>&1 | tee ../../logs/task_2-2_stats.log
 ```
 
 ### 4. Lấy kết quả Parquet về máy
 
 ```bash
-rm -f Task_2-2.parquet
-hadoop fs -get /lab3/output/Task_2-2.parquet ./Task_2-2.parquet
+mkdir -p ../../results
+rm -rf ../../results/Task_2-2.parquet
+hadoop fs -get /lab03/output/Task_2-2.parquet ../../results/Task_2-2.parquet
 cd ../..
 ```
 
@@ -419,15 +429,15 @@ stddev_p90_exact
 
 ## QUY TRÌNH TỰ ĐỘNG HÓA: BUILD & RUN ALL
 
-Dự án cung cấp script `build_and_run_all.sh` để tự động hóa quy trình chạy `Task_1-1`, `Task_1-2` và `Task_2-1`.
+Dự án cung cấp script `build_and_run_all.sh` để tự động hóa quy trình chạy `Task_1-1`, `Task_1-2`, `Task_2-1` và `Task_2-2`.
 
 Script này thực hiện các bước:
 
 1. Chuẩn bị dữ liệu input trên HDFS.
 2. Biên dịch mã nguồn Scala.
 3. Đóng gói file JAR.
-4. Chạy Hadoop MapReduce job cho `Task_1-1`, `Task_1-2` và Spark job cho `Task_2-1`.
-5. Trích xuất kết quả cuối cùng từ HDFS về thư mục `results/`.
+4. Chạy Hadoop MapReduce job cho `Task_1-1`, `Task_1-2` và Spark job cho `Task_2-1`, `Task_2-2`.
+5. Trích xuất kết quả cuối cùng từ HDFS về thư mục `results/` và log về thư mục `logs/`.
 
 Các file kết quả sau khi chạy script:
 
@@ -435,6 +445,8 @@ Các file kết quả sau khi chạy script:
 results/Task_1-1.csv
 results/Task_1-2.csv
 results/Task_2-1.parquet
+results/Task_2-2.parquet
+logs/task_2-2_stats.log
 ```
 
 ### 1. Cấp quyền thực thi
@@ -458,6 +470,8 @@ tree results
 head results/Task_1-1.csv
 head results/Task_1-2.csv
 ls results/Task_2-1.parquet
+ls results/Task_2-2.parquet
+cat logs/task_2-2_stats.log
 ```
 
 ## QUY TRÌNH BENCHMARK

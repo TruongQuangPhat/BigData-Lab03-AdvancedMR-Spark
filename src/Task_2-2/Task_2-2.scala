@@ -152,6 +152,11 @@ object Task22 {
 
     val N_RUNS = 5
 
+    println("Warming up Spark execution before benchmark...")
+    computeApprox().count()
+    computeExact().count()
+    println("Warm-up completed.")
+
     var thresholdsApprox: DataFrame = null
     var thresholdsExact: DataFrame = null
 
