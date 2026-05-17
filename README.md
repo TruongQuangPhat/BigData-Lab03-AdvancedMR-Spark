@@ -2,14 +2,16 @@
 
 ## Hướng dẫn Build, Chạy và Benchmark
 
-README này hướng dẫn cách chuẩn bị môi trường, chạy hai bài MapReduce hiện tại của Lab 03 và đo thời gian thực thi phục vụ phần benchmark trong báo cáo.
+README này hướng dẫn cách chuẩn bị môi trường, chạy các bài hiện có của Lab 03 và đo thời gian thực thi phục vụ phần benchmark trong báo cáo.
 
-Phạm vi hiện tại:
+Phần MapReduce hiện tại:
 
 - `Task_1-1`: Sliding Window
 - `Task_1-2`: Median Variety
 
-Các task Spark còn lại có thể được bổ sung vào script và README sau khi nhóm hoàn thiện phần triển khai tương ứng.
+Phần Spark:
+
+- `Task_2-2`: Population Standard Deviation with Dynamic Percentiles
 
 ## YÊU CẦU HỆ THỐNG
 
@@ -18,6 +20,7 @@ Các task Spark còn lại có thể được bổ sung vào script và README s
 - Java 8 hoặc Java 11
 - Môi trường Linux hoặc WSL
 - Python 3 để xử lý thống kê benchmark và ghi log JSON
+- Spark nếu chạy các task Spark
 
 ## CẤU TRÚC THƯ MỤC QUAN TRỌNG
 
@@ -27,15 +30,18 @@ BigData-Lab03-AdvancedMR-Spark/
 │   └── Amazon_Sale_Report.csv
 ├── results/
 │   ├── Task_1-1.csv
-│   └── Task_1-2.csv
+│   ├── Task_1-2.csv
+│   └── Task_2-2.parquet
 ├── logs/
 │   ├── Task_1-1.json
 │   └── Task_1-2.json
 ├── src/
 │   ├── Task_1-1/
 │   │   └── task1_1.scala
-│   └── Task_1-2/
-│       └── task1_2.scala
+│   ├── Task_1-2/
+│   │   └── task1_2.scala
+│   └── Task_2-2/
+│       └── task_2_2.scala
 ├── build_and_run_all.sh
 ├── benchmark_all.sh
 └── README.md
@@ -75,12 +81,10 @@ jps
 
 Cần bảo đảm các tiến trình chính đã chạy, ví dụ:
 
-```text
-NameNode
-DataNode
-ResourceManager
-NodeManager
-```
+- `NameNode`
+- `DataNode`
+- `ResourceManager`
+- `NodeManager`
 
 ### 3. Tạo thư mục input trên HDFS và tải dữ liệu lên
 
@@ -229,45 +233,49 @@ sed -i '2,${/^Month,State/d}' ../../results/Task_1-2.csv
 cd ../..
 ```
 
----
-
 ## TASK 2-2: POPULATION STANDARD DEVIATION WITH DYNAMIC PERCENTILES (SPARK)
 
-### Cấu trúc package: `Task22`
+### Cấu trúc package
 
-1. Di chuyển vào thư mục mã nguồn:
+- Main class: `Task22`
+- File source: `src/Task_2-2/task_2_2.scala`
+
+### 1. Di chuyển vào thư mục mã nguồn
+
 ```bash
 cd src/Task_2-2
 ```
 
-2. Cấu hình classpath và biên dịch:
+### 2. Cấu hình classpath và biên dịch
+
 ```bash
 export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
-mkdir -p classes && rm -rf classes/* && rm -f Task_2_2.jar
+
+mkdir -p classes
+rm -rf classes/*
+rm -f Task_2_2.jar
+
 scalac -classpath "$SPARK_CLASSPATH" -d classes task_2_2.scala
 jar -cvf Task_2_2.jar -C classes .
 ```
 
-3. Submit Job lên Spark và xuất Log:
+### 3. Submit job lên Spark và xuất log
+
 ```bash
 spark-submit --class Task22 --master local[*] Task_2_2.jar 2>&1 | tee task_2-2_stats.log
 ```
 
-4. Lấy kết quả Parquet về máy:
+### 4. Lấy kết quả Parquet về máy
+
 ```bash
 rm -f Task_2-2.parquet
 hadoop fs -get /lab2/output/Task_2-2.parquet ./Task_2-2.parquet
 cd ../..
 ```
 
----
-
 ## KIỂM TRA ĐỊNH DẠNG KẾT QUẢ
 
-Các file kết quả sẽ được lưu tại `src/Task_1-1/Task_1-1.csv`, `src/Task_1-2/Task_1-2.csv` và `Task_2-2.parquet`.
-## KIỂM TRA ĐỊNH DẠNG KẾT QUẢ
-
-Các file kết quả cuối cùng được lưu tại:
+Các file kết quả của `Task_1-1` và `Task_1-2` được lưu tại:
 
 ```text
 results/Task_1-1.csv
@@ -300,11 +308,28 @@ Month,State,MedianVariety
 ...
 ```
 
-### Task 2-2 Output Format (`Task_2-2.parquet`):
-Định dạng file xuất ra là **Parquet** dạng Wide format, bao gồm 15 cột:
-`SKU, Month, total_orders, threshold_p80_approx, threshold_p90_approx, orders_p80_approx, orders_p90_approx, stddev_p80_approx, stddev_p90_approx, threshold_p80_exact, threshold_p90_exact, orders_p80_exact, orders_p90_exact, stddev_p80_exact, stddev_p90_exact`
+### Task 2-2 Output Format
 
----
+Định dạng file xuất ra là Parquet dạng wide format, bao gồm 15 cột:
+
+```text
+SKU,
+Month,
+total_orders,
+threshold_p80_approx,
+threshold_p90_approx,
+orders_p80_approx,
+orders_p90_approx,
+stddev_p80_approx,
+stddev_p90_approx,
+threshold_p80_exact,
+threshold_p90_exact,
+orders_p80_exact,
+orders_p90_exact,
+stddev_p80_exact,
+stddev_p90_exact
+```
+
 ## QUY TRÌNH TỰ ĐỘNG HÓA: BUILD & RUN ALL
 
 Dự án cung cấp script `build_and_run_all.sh` để tự động hóa quy trình chạy hai bài MapReduce hiện tại.
@@ -341,56 +366,6 @@ chmod +x build_and_run_all.sh
 ### 3. Kiểm tra kết quả
 
 ```bash
-#!/bin/bash
-
-echo "--- PREPARING HDFS ---"
-
-hadoop fs -mkdir -p /lab2/input/
-
-hadoop fs -test -e /lab2/input/Amazon_Sale_Report.csv || hadoop fs -put data/Amazon_Sale_Report.csv /lab2/input/
-
-export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
-
-echo "--- BUILDING & RUNNING TASK 1-1 ---"
-
-cd src/Task_1-1
-mkdir -p classes && rm -rf classes/* && rm -f SlidingWindowJob.jar
-scalac -classpath "$HADOOP_CLASSPATH" -d classes SlidingWindowJob.scala
-jar -cvf SlidingWindowJob.jar -C classes .
-hadoop jar SlidingWindowJob.jar lab2.task11.SlidingWindowJob /lab2/input/Amazon_Sale_Report.csv /lab2/output/task1-1
-rm -f Task_1-1.csv
-hadoop fs -getmerge /lab2/output/task1-1 Task_1-1.csv
-sed -i '2,${/^State,TargetDate/d}' Task_1-1.csv
-cd ../..
-
-echo "--- BUILDING & RUNNING TASK 1-2 ---"
-
-cd src/Task_1-2
-mkdir -p classes && rm -rf classes/* && rm -f MedianVarietyJob.jar
-scalac -classpath "$HADOOP_CLASSPATH" -d classes MedianVarietyJob.scala
-jar -cvf MedianVarietyJob.jar -C classes .
-hadoop jar MedianVarietyJob.jar lab2.task12.MedianVarietyJob /lab2/input/Amazon_Sale_Report.csv /lab2/output/task1-2-temp /lab2/output/task1-2
-rm -f Task_1-2.csv
-hadoop fs -getmerge /lab2/output/task1-2 Task_1-2.csv
-sed -i '2,${/^Month,State/d}' Task_1-2.csv
-echo "--- BUILDING & RUNNING TASK 2-2 (SPARK) ---"
-
-cd src/Task_2-2
-mkdir -p classes && rm -rf classes/* && rm -f Task_2_2.jar
-export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
-scalac -classpath "$SPARK_CLASSPATH" -d classes task_2_2.scala
-jar -cvf Task_2_2.jar -C classes .
-
-spark-submit \
-  --class Task22 \
-  --master local[*] \
-  Task_2_2.jar 2>&1 | tee task_2-2_stats.log
-
-rm -f Task_2-2.parquet
-hadoop fs -get /lab2/output/Task_2-2.parquet ./Task_2-2.parquet
-cd ../..
-
-echo "HOÀN TẤT BUILD VÀ CHẠY TOÀN BỘ PROJECT!"
 tree results
 head results/Task_1-1.csv
 head results/Task_1-2.csv
@@ -402,8 +377,8 @@ Dự án cung cấp script `benchmark_all.sh` để đo thời gian thực thi c
 
 Ở phiên bản hiện tại, script benchmark hỗ trợ:
 
-1. `Task_1-1`: Sliding Window
-2. `Task_1-2`: Median Variety
+- `Task_1-1`: Sliding Window
+- `Task_1-2`: Median Variety
 
 Mỗi task được chạy 5 lần. Kết quả benchmark được lưu thành hai file log JSON riêng biệt:
 
@@ -429,6 +404,12 @@ Chỉ cần thực hiện một lần:
 
 ```bash
 chmod +x benchmark_all.sh
+```
+
+Hoặc cấp quyền cho cả hai script cùng lúc:
+
+```bash
+chmod +x build_and_run_all.sh benchmark_all.sh
 ```
 
 ### 2. Chạy benchmark
