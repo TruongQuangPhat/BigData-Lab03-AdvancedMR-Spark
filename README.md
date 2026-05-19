@@ -40,6 +40,7 @@ BigData-Lab03-AdvancedMR-Spark/
 │   ├── Task_1-1.json
 │   ├── Task_1-2.json
 │   ├── Task_2-1.json
+│   ├── Task_2-2.json
 │   └── task_2-2_stats.log
 ├── src/
 │   ├── Task_1-1/
@@ -504,6 +505,7 @@ Dự án cung cấp script `benchmark_all.sh` để đo thời gian thực thi c
 - `Task_1-1`: Sliding Window
 - `Task_1-2`: Median Variety
 - `Task_2-1`: Cancelled Standard Order Qualification Percentage
+- `Task_2-2`: Population Standard Deviation with Dynamic Percentiles
 
 Mỗi task được chạy 1 lần warmup trước, sau đó chạy 5 lần đo chính thức. Lần warmup chỉ dùng để làm nóng môi trường thực thi và không được đưa vào thống kê benchmark. Kết quả benchmark được lưu thành các file log JSON riêng biệt:
 
@@ -511,6 +513,7 @@ Mỗi task được chạy 1 lần warmup trước, sau đó chạy 5 lần đo 
 logs/Task_1-1.json
 logs/Task_1-2.json
 logs/Task_2-1.json
+logs/Task_2-2.json
 ```
 
 Các file log chứa:
@@ -552,4 +555,5 @@ tree logs
 cat logs/Task_1-1.json
 cat logs/Task_1-2.json
 cat logs/Task_2-1.json
+cat logs/Task_2-2.json
 ```
