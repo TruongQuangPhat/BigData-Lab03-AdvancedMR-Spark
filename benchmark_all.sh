@@ -15,10 +15,6 @@ echo "============================================================"
 echo "LAB 03 - BENCHMARK"
 echo "============================================================"
 
-# ============================================================
-# Resolve SPARK_HOME
-# ============================================================
-
 if [[ -n "${SPARK_HOME:-}" && -x "$SPARK_HOME/bin/spark-submit" ]]; then
   :
 
@@ -44,10 +40,6 @@ if [[ ! -d "$SPARK_HOME/jars" ]]; then
   exit 1
 fi
 
-# ============================================================
-# Resolve HDFS URI
-# ============================================================
-
 HDFS_URI="$(hdfs getconf -confKey fs.defaultFS)"
 
 if [[ -z "$HDFS_URI" ]]; then
@@ -57,13 +49,18 @@ fi
 
 SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
 SPARK_TASK21_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-1.parquet"
+SPARK_TASK22_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-2.parquet"
 
-export HADOOP_CLASSPATH="$(hadoop classpath):/usr/share/scala/lib/scala-library.jar"
+SCALA_LIBRARY_JAR="${SCALA_HOME:-$(dirname "$(dirname "$(readlink -f "$(which scalac)")")")}/lib/scala-library.jar"
+
+if [[ ! -f "$SCALA_LIBRARY_JAR" ]]; then
+  echo "THẤT BẠI: Không tìm thấy scala-library.jar tương ứng với scalac hiện tại."
+  echo "SCALA_LIBRARY_JAR=$SCALA_LIBRARY_JAR"
+  exit 1
+fi
+
+export HADOOP_CLASSPATH="$(hadoop classpath):$SCALA_LIBRARY_JAR"
 export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
-
-# ============================================================
-# Prepare HDFS input
-# ============================================================
 
 if ! hadoop fs -mkdir -p /lab03/input/ >/dev/null 2>&1; then
   echo "THẤT BẠI: Không tạo được thư mục input trên HDFS."
@@ -75,11 +72,7 @@ if ! hadoop fs -put -f "$PROJECT_ROOT/data/Amazon_Sale_Report.csv" /lab03/input/
   exit 1
 fi
 
-echo "Chuẩn bị dữ liệu HDFS: THÀNH CÔNG"
-
-# ============================================================
-# Utility: measure one run silently
-# ============================================================
+echo "THÀNH CÔNG: Chuẩn bị dữ liệu HDFS"
 
 measure_command() {
   local label="$1"
@@ -107,10 +100,6 @@ PY
     return 1
   fi
 }
-
-# ============================================================
-# Utility: write benchmark result to JSON
-# ============================================================
 
 write_json_log() {
   local task_name="$1"
@@ -193,10 +182,6 @@ with open(log_file, "w", encoding="utf-8") as f:
 PY
 }
 
-# ============================================================
-# Benchmark Task 1-1
-# ============================================================
-
 benchmark_task_1_1() {
   local TASK_NAME="Task_1-1"
   local SRC_DIR="$PROJECT_ROOT/src/Task_1-1"
@@ -213,10 +198,18 @@ benchmark_task_1_1() {
 
   if ! (
     cd "$SRC_DIR"
+
     mkdir -p classes
     rm -rf classes/*
     rm -f "$JAR_NAME"
+
     scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
+
+    (
+      cd classes
+      jar xf "$SCALA_LIBRARY_JAR"
+    )
+
     jar -cvf "$JAR_NAME" -C classes .
   ) >/dev/null 2>&1; then
     echo "THẤT BẠI: $TASK_NAME - lỗi biên dịch hoặc đóng gói."
@@ -262,10 +255,6 @@ benchmark_task_1_1() {
   echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_1-1.json"
 }
 
-# ============================================================
-# Benchmark Task 1-2
-# ============================================================
-
 benchmark_task_1_2() {
   local TASK_NAME="Task_1-2"
   local SRC_DIR="$PROJECT_ROOT/src/Task_1-2"
@@ -283,10 +272,18 @@ benchmark_task_1_2() {
 
   if ! (
     cd "$SRC_DIR"
+
     mkdir -p classes
     rm -rf classes/*
     rm -f "$JAR_NAME"
+
     scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
+
+    (
+      cd classes
+      jar xf "$SCALA_LIBRARY_JAR"
+    )
+
     jar -cvf "$JAR_NAME" -C classes .
   ) >/dev/null 2>&1; then
     echo "THẤT BẠI: $TASK_NAME - lỗi biên dịch hoặc đóng gói."
@@ -337,10 +334,6 @@ benchmark_task_1_2() {
   echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_1-2.json"
 }
 
-# ============================================================
-# Benchmark Task 2-1
-# ============================================================
-
 benchmark_task_2_1() {
   local TASK_NAME="Task_2-1"
   local SRC_DIR="$PROJECT_ROOT/src/Task_2-1"
@@ -357,9 +350,11 @@ benchmark_task_2_1() {
 
   if ! (
     cd "$SRC_DIR"
+
     mkdir -p classes
     rm -rf classes/*
     rm -f "$JAR_NAME"
+
     scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
     jar -cvf "$JAR_NAME" -C classes lab3
   ) >/dev/null 2>&1; then
@@ -417,13 +412,88 @@ benchmark_task_2_1() {
   echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_2-1.json"
 }
 
-# ============================================================
-# Main
-# ============================================================
+benchmark_task_2_2() {
+  local TASK_NAME="Task_2-2"
+  local SRC_DIR="$PROJECT_ROOT/src/Task_2-2"
+  local JAR_NAME="SparkTask22.jar"
+  local MAIN_CLASS="Task22"
+  local OUTPUT_PATH="/lab03/output/Task_2-2.parquet"
+  local WARMUP_FILE="$LOG_DIR/task2_2_warmup.tmp"
+  local TMP_FILE="$LOG_DIR/task2_2_times.tmp"
+  local LOG_FILE="$LOG_DIR/Task_2-2.json"
+
+  echo "Đang benchmark $TASK_NAME..."
+
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
+
+  if ! (
+    cd "$SRC_DIR"
+
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+
+    scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
+    jar -cvf "$JAR_NAME" -C classes .
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - lỗi biên dịch hoặc đóng gói."
+    exit 1
+  fi
+
+  for i in $(seq 1 "$WARMUP_RUNS"); do
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
+    hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" >/dev/null 2>&1 || true
+
+    measure_command \
+      "$TASK_NAME warm-up $i/$WARMUP_RUNS" \
+      "$WARMUP_FILE" \
+      spark-submit \
+        --class "$MAIN_CLASS" \
+        --master local[*] \
+        --conf "spark.ui.showConsoleProgress=false" \
+        "$SRC_DIR/$JAR_NAME" \
+        "$SPARK_INPUT_PATH" \
+        "$SPARK_TASK22_OUTPUT_PATH"
+  done
+
+  hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
+  hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" >/dev/null 2>&1 || true
+
+  for i in $(seq 1 "$RUNS"); do
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
+    hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" >/dev/null 2>&1 || true
+
+    measure_command \
+      "$TASK_NAME lần chạy chính thức $i/$RUNS" \
+      "$TMP_FILE" \
+      spark-submit \
+        --class "$MAIN_CLASS" \
+        --master local[*] \
+        --conf "spark.ui.showConsoleProgress=false" \
+        "$SRC_DIR/$JAR_NAME" \
+        "$SPARK_INPUT_PATH" \
+        "$SPARK_TASK22_OUTPUT_PATH"
+  done
+
+  write_json_log \
+    "$TASK_NAME" \
+    "$MAIN_CLASS" \
+    "Apache Spark" \
+    "$SPARK_INPUT_PATH" \
+    "$SPARK_TASK22_OUTPUT_PATH" \
+    "$WARMUP_FILE" \
+    "$TMP_FILE" \
+    "$LOG_FILE"
+
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
+
+  echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_2-2.json"
+}
 
 benchmark_task_1_1
 benchmark_task_1_2
 benchmark_task_2_1
+benchmark_task_2_2
 
 echo "============================================================"
 echo "HOÀN TẤT BENCHMARK"
@@ -431,4 +501,5 @@ echo "Log benchmark:"
 echo "- logs/Task_1-1.json"
 echo "- logs/Task_1-2.json"
 echo "- logs/Task_2-1.json"
+echo "- logs/Task_2-2.json"
 echo "============================================================"

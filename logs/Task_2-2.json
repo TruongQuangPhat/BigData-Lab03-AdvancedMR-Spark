@@ -1,23 +1,23 @@
 {
-  "task": "Task_1-2",
-  "framework": "Hadoop MapReduce",
+  "task": "Task_2-2",
+  "framework": "Apache Spark",
   "benchmark_type": "job_runtime",
   "description": "Benchmark measures submitted job execution time. Warm-up runs are recorded separately and are not included in official statistics. Compilation, JAR packaging, HDFS input preparation, result copying, and local post-processing are excluded.",
-  "input_path": "/lab03/input/Amazon_Sale_Report.csv",
-  "output_path": "/lab03/output/task1-2",
-  "main_class": "lab03.MedianVarietyJob",
+  "input_path": "hdfs://localhost:8020/lab03/input/Amazon_Sale_Report.csv",
+  "output_path": "hdfs://localhost:8020/lab03/output/Task_2-2.parquet",
+  "main_class": "Task22",
   "warmup": {
     "number_of_runs": 1,
     "runs": [
       {
         "run": 1,
-        "runtime_seconds": 43.164989
+        "runtime_seconds": 55.233366
       }
     ],
     "statistics": {
-      "mean_seconds": 43.164989,
-      "min_seconds": 43.164989,
-      "max_seconds": 43.164989
+      "mean_seconds": 55.233366,
+      "min_seconds": 55.233366,
+      "max_seconds": 55.233366
     },
     "included_in_official_statistics": false
   },
@@ -26,31 +26,31 @@
     "runs": [
       {
         "run": 1,
-        "runtime_seconds": 40.020765
+        "runtime_seconds": 48.783687
       },
       {
         "run": 2,
-        "runtime_seconds": 42.973478
+        "runtime_seconds": 47.715163
       },
       {
         "run": 3,
-        "runtime_seconds": 41.053303
+        "runtime_seconds": 48.070228
       },
       {
         "run": 4,
-        "runtime_seconds": 41.091039
+        "runtime_seconds": 46.652928
       },
       {
         "run": 5,
-        "runtime_seconds": 42.016748
+        "runtime_seconds": 48.458504
       }
     ],
     "statistics": {
-      "mean_seconds": 41.431067,
-      "stddev_seconds": 1.1146,
-      "min_seconds": 40.020765,
-      "max_seconds": 42.973478
+      "mean_seconds": 47.936102,
+      "stddev_seconds": 0.82229,
+      "min_seconds": 46.652928,
+      "max_seconds": 48.783687
     }
   },
-  "created_at": "2026-05-19T17:31:47"
+  "created_at": "2026-05-19T17:39:33"
 }

@@ -1,29 +1,50 @@
-# LAB 03 - ADVANCED MAPREDUCE PROBLEMS
+# LAB 03 - ADVANCED MAPREDUCE AND SPARK STRUCTURED API
 
-## Hướng dẫn Build, Chạy và Benchmark
+## 1. Mục đích
 
-README này hướng dẫn cách chuẩn bị môi trường, chạy các bài hiện có của Lab 03 và đo thời gian thực thi phục vụ phần benchmark trong báo cáo.
+README này hướng dẫn cách chuẩn bị môi trường, chạy toàn bộ các task của Lab 03 và thực hiện benchmark thời gian chạy.
 
-Phần MapReduce hiện tại:
+Lab 03 gồm bốn task:
 
-- `Task_1-1`: Sliding Window
-- `Task_1-2`: Median Variety
+- `Task_1-1`: Sliding Window bằng Hadoop MapReduce
+- `Task_1-2`: Median Variety bằng Hadoop MapReduce
+- `Task_2-1`: Cancelled Standard Order Qualification Percentage bằng Spark Structured API
+- `Task_2-2`: Population Standard Deviation with Dynamic Percentiles bằng Spark Structured API
 
-Phần Spark:
+## 2. Yêu cầu môi trường
 
-- `Task_2-1`: Cancelled Standard Order Qualification Percentage
-- `Task_2-2`: Population Standard Deviation with Dynamic Percentiles
+Môi trường đã được kiểm thử với cấu hình sau:
 
-## YÊU CẦU HỆ THỐNG
+```text
+Java: OpenJDK 8
+Hadoop: Hadoop 3.x
+Spark: Spark 3.5.x, build với Scala 2.12
+Scala compiler: Scala 2.12.18
+Python: Python 3
+Hệ điều hành: Linux hoặc WSL
+```
 
-- Hadoop 3.x ở chế độ pseudo-distributed mode
-- Scala 2.12.x hoặc 2.13.x
-- Java 8 hoặc Java 11
-- Môi trường Linux hoặc WSL
-- Python 3 để xử lý thống kê benchmark và ghi log JSON
-- Spark nếu chạy các task Spark
+Điểm quan trọng là version Scala dùng để biên dịch phải khớp với version Scala của Spark runtime. Với Spark đang dùng Scala 2.12.18, nên dùng Scala compiler 2.12.18.
 
-## CẤU TRÚC THƯ MỤC QUAN TRỌNG
+Kiểm tra môi trường:
+
+```bash
+java -version
+scala -version
+scalac -version
+spark-submit --version 2>&1 | grep -i scala
+hdfs getconf -confKey fs.defaultFS
+```
+
+Kết quả mong đợi:
+
+```text
+Scala code runner version 2.12.18
+Scala compiler version 2.12.18
+Using Scala version 2.12.18
+```
+
+## 3. Cấu trúc thư mục
 
 ```text
 BigData-Lab03-AdvancedMR-Spark/
@@ -38,6 +59,7 @@ BigData-Lab03-AdvancedMR-Spark/
 │   ├── Task_1-1.json
 │   ├── Task_1-2.json
 │   ├── Task_2-1.json
+│   ├── Task_2-2.json
 │   └── task_2-2_stats.log
 ├── src/
 │   ├── Task_1-1/
@@ -53,393 +75,99 @@ BigData-Lab03-AdvancedMR-Spark/
 └── README.md
 ```
 
-Trong đó:
+## 4. Chuẩn bị Hadoop và HDFS
 
-- `data/` chứa dữ liệu đầu vào local.
-- `src/` chứa mã nguồn Scala.
-- `results/` chứa các file kết quả cuối cùng dùng để nộp bài.
-- `logs/` chứa log benchmark phục vụ báo cáo.
-- `build_and_run_all.sh` dùng để build và chạy các task hiện có.
-- `benchmark_all.sh` dùng để đo thời gian thực thi của các task hiện có.
-
-## CHUẨN BỊ MÔI TRƯỜNG VÀ DỮ LIỆU TRÊN HDFS
-
-Tất cả các lệnh dưới đây được thực thi tại thư mục gốc của dự án.
-
-Trước tiên, di chuyển vào project root:
+Tất cả các lệnh dưới đây được chạy tại thư mục gốc của project.
 
 ```bash
 cd ~/AI_Project/BigData-Lab03-AdvancedMR-Spark
 ```
 
-### 1. Khởi động Hadoop
+Khởi động Hadoop:
 
 ```bash
 start-dfs.sh
 start-yarn.sh
 ```
 
-### 2. Kiểm tra các tiến trình Hadoop
+Kiểm tra tiến trình:
 
 ```bash
 jps
 ```
 
-Cần bảo đảm các tiến trình chính đã chạy, ví dụ:
+Cần có các tiến trình chính sau:
 
-- `NameNode`
-- `DataNode`
-- `ResourceManager`
-- `NodeManager`
+```text
+NameNode
+DataNode
+SecondaryNameNode
+ResourceManager
+NodeManager
+```
 
-### 3. Tạo thư mục input trên HDFS và tải dữ liệu lên
+Tạo input trên HDFS:
 
 ```bash
 hadoop fs -mkdir -p /lab03/input/
 hadoop fs -put -f data/Amazon_Sale_Report.csv /lab03/input/
-```
-
-Kiểm tra dữ liệu trên HDFS:
-
-```bash
 hadoop fs -ls /lab03/input/
 ```
 
-### 4. Tạo thư mục output local
+## 5. Lưu ý về Scala runtime cho MapReduce
+
+Hai task MapReduce (`Task_1-1` và `Task_1-2`) được viết bằng Scala nhưng chạy trong Hadoop YARN container. Vì vậy, khi đóng gói JAR cho MapReduce, cần đưa `scala-library.jar` tương ứng với `scalac` hiện tại vào JAR.
+
+Script `build_and_run_all.sh` và `benchmark_all.sh` đã xử lý việc này tự động bằng cách:
 
 ```bash
-mkdir -p results logs
+SCALA_LIBRARY_JAR="${SCALA_HOME:-$(dirname "$(dirname "$(readlink -f "$(which scalac)")")")}/lib/scala-library.jar"
 ```
 
-## TASK 1-1: SLIDING WINDOW
-
-### Cấu trúc source
-
-- File source: `src/Task_1-1/Task_1-1.scala`
-- Package: `lab03`
-- Main class: `lab03.SlidingWindowJob`
-- Input HDFS: `/lab03/input/Amazon_Sale_Report.csv`
-- Output HDFS: `/lab03/output/task1-1`
-- Output local cuối cùng: `results/Task_1-1.csv`
-
-### 1. Di chuyển vào thư mục mã nguồn
+Sau đó, với các task MapReduce, script sẽ unpack Scala runtime vào thư mục `classes` trước khi tạo JAR:
 
 ```bash
-cd src/Task_1-1
+cd classes
+jar xf "$SCALA_LIBRARY_JAR"
+cd ..
 ```
 
-### 2. Thiết lập classpath Hadoop và Scala
-
-```bash
-export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
-```
-
-### 3. Biên dịch và đóng gói JAR
-
-```bash
-mkdir -p classes
-rm -rf classes/*
-rm -f SlidingWindowJob.jar
-
-scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
-jar -cvf SlidingWindowJob.jar -C classes .
-```
-
-### 4. Chạy Hadoop MapReduce job
-
-```bash
-hadoop jar SlidingWindowJob.jar lab03.SlidingWindowJob \
-  /lab03/input/Amazon_Sale_Report.csv \
-  /lab03/output/task1-1
-```
-
-### 5. Lấy kết quả từ HDFS về thư mục `results/`
-
-Hadoop MapReduce ghi output ra thư mục HDFS, thường gồm các file `part-r-*`. Vì yêu cầu nộp là một file `.csv` duy nhất, cần dùng `getmerge` để gộp kết quả về local.
-
-```bash
-mkdir -p ../../results
-rm -f ../../results/Task_1-1.csv
-
-hadoop fs -getmerge /lab03/output/task1-1 ../../results/Task_1-1.csv
-sed -i '2,${/^State,TargetDate/d}' ../../results/Task_1-1.csv
-```
-
-### 6. Quay lại thư mục gốc
-
-```bash
-cd ../..
-```
-
-## TASK 1-2: MEDIAN VARIETY
-
-### Cấu trúc source
-
-- File source: `src/Task_1-2/Task_1-2.scala`
-- Package: `lab03`
-- Main class: `lab03.MedianVarietyJob`
-- Input HDFS: `/lab03/input/Amazon_Sale_Report.csv`
-- Temp output HDFS: `/lab03/output/task1-2-temp`
-- Final output HDFS: `/lab03/output/task1-2`
-- Output local cuối cùng: `results/Task_1-2.csv`
-
-Task này sử dụng kỹ thuật job chaining, gồm hai MapReduce jobs chạy nối tiếp nhau.
-
-### 1. Di chuyển vào thư mục mã nguồn
-
-```bash
-cd src/Task_1-2
-```
-
-### 2. Thiết lập classpath Hadoop và Scala
-
-```bash
-export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
-```
-
-### 3. Biên dịch và đóng gói JAR
-
-```bash
-mkdir -p classes
-rm -rf classes/*
-rm -f MedianVarietyJob.jar
-
-scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
-jar -cvf MedianVarietyJob.jar -C classes .
-```
-
-### 4. Chạy Hadoop MapReduce job
-
-Task 1-2 cần truyền đủ ba tham số:
-
-1. Input path trên HDFS
-2. Temp output path cho Job 1
-3. Final output path cho Job 2
-
-```bash
-hadoop jar MedianVarietyJob.jar lab03.MedianVarietyJob \
-  /lab03/input/Amazon_Sale_Report.csv \
-  /lab03/output/task1-2-temp \
-  /lab03/output/task1-2
-```
-
-### 5. Lấy kết quả từ HDFS về thư mục `results/`
-
-```bash
-mkdir -p ../../results
-rm -f ../../results/Task_1-2.csv
-
-hadoop fs -getmerge /lab03/output/task1-2 ../../results/Task_1-2.csv
-sed -i '2,${/^Month,State/d}' ../../results/Task_1-2.csv
-```
-
-### 6. Quay lại thư mục gốc
-
-```bash
-cd ../..
-```
-
-## TASK 2-1: CANCELLED STANDARD ORDER QUALIFICATION PERCENTAGE (SPARK)
-
-### Cấu trúc package
-
-- File source: `src/Task_2-1/Task_2-1.scala`
-- Package: `lab3.task21`
-- Main class: `lab3.task21.SparkTask21`
-- Input ví dụ: `/app/data.csv`
-- Output ví dụ: `/lab03/output/Task_2-1.parquet`
-- Output format: single Parquet file
-
-Task này dùng Spark DataFrame API để tính, với mỗi city, tỷ lệ các order `Cancelled` và `Standard` thỏa đồng thời:
-
-- có ít nhất 3 promotion hợp lệ theo thời gian;
-- `Amount` nhỏ hơn average amount của state tương ứng;
-- average amount được tính từ các order `Fulfilment = Merchant` và `Courier Status = Shipped`.
-
-Promotion hợp lệ nếu active period của promotion đó ít nhất 2 ngày, trong đó:
+Không dùng hard-code:
 
 ```text
-active_period = last_appearance_date - first_appearance_date
+/usr/share/scala/lib/scala-library.jar
 ```
 
-Code không dùng Spark SQL string query. Execution plan mở rộng được in bằng:
+vì đường dẫn này có thể trỏ tới Scala 2.11 cũ và gây lỗi runtime khi code được compile bằng Scala 2.12.
 
-```scala
-resultDf.explain(true)
-```
+## 6. Chạy toàn bộ project bằng script
 
-### 1. Di chuyển vào thư mục mã nguồn
+Cấp quyền thực thi:
 
 ```bash
-cd src/Task_2-1
+chmod +x build_and_run_all.sh
 ```
 
-### 2. Cấu hình classpath và biên dịch
+Chạy toàn bộ 4 task:
 
 ```bash
-export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
-export HADOOP_CLASSPATH=$(hadoop classpath)
-
-mkdir -p classes
-rm -rf classes/*
-rm -f SparkTask21.jar
-
-scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
-jar -cvf SparkTask21.jar -C classes lab3
+./build_and_run_all.sh
 ```
 
-### 3. Submit job lên Spark
+Script sẽ tự động thực hiện:
 
-```bash
-spark-submit \
-  --class lab3.task21.SparkTask21 \
-  --master local[*] \
-  SparkTask21.jar \
-  hdfs://localhost:9000/lab03/input/Amazon_Sale_Report.csv \
-  hdfs://localhost:9000/lab03/output/Task_2-1.parquet
-```
+1. Kiểm tra và xác định `SPARK_HOME`
+2. Lấy HDFS URI từ `fs.defaultFS`
+3. Xác định `scala-library.jar` tương ứng với `scalac`
+4. Upload dữ liệu vào `/lab03/input/`
+5. Build và chạy `Task_1-1`
+6. Build và chạy `Task_1-2`
+7. Build và chạy `Task_2-1`
+8. Build và chạy `Task_2-2`
+9. Lấy kết quả cuối cùng về thư mục `results/`
+10. Lưu log thống kê của `Task_2-2` vào `logs/task_2-2_stats.log`
 
-### 4. Quay lại thư mục gốc
-
-```bash
-cd ../..
-```
-
-### 5. Nội dung cần đưa vào report
-
-Sau khi chạy, copy phần `=== Task 2-1: extended execution plan ===` trong console vào report và phân tích:
-
-- physical join strategy Spark chọn, ví dụ `BroadcastHashJoin` hoặc `SortMergeJoin`;
-- số lượng `Exchange` node trong physical plan;
-- số stage thực tế quan sát được khi chạy job.
-
-## TASK 2-2: POPULATION STANDARD DEVIATION WITH DYNAMIC PERCENTILES (SPARK)
-
-### Cấu trúc package
-
-- Main class: `Task22`
-- File source: `src/Task_2-2/Task_2-2.scala`
-
-### 1. Di chuyển vào thư mục mã nguồn
-
-```bash
-cd src/Task_2-2
-```
-
-### 2. Cấu hình classpath và biên dịch
-
-```bash
-export SPARK_CLASSPATH=$(find $SPARK_HOME/jars -name "*.jar" | tr '\n' ':')
-export HADOOP_CLASSPATH=$(hadoop classpath)
-
-mkdir -p classes
-rm -rf classes/*
-rm -f SparkTask22.jar
-
-scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
-jar -cvf SparkTask22.jar -C classes .
-```
-
-### 3. Submit job lên Spark và xuất log
-
-```bash
-mkdir -p ../../logs
-spark-submit \
-  --class Task22 \
-  --master local[*] \
-  SparkTask22.jar \
-  hdfs://localhost:9000/lab03/input/Amazon_Sale_Report.csv \
-  hdfs://localhost:9000/lab03/output/Task_2-2.parquet 2>&1 | tee ../../logs/task_2-2_stats.log
-```
-
-### 4. Lấy kết quả Parquet về máy
-
-```bash
-mkdir -p ../../results
-rm -rf ../../results/Task_2-2.parquet
-hadoop fs -get /lab03/output/Task_2-2.parquet ../../results/Task_2-2.parquet
-cd ../..
-```
-
-## KIỂM TRA ĐỊNH DẠNG KẾT QUẢ
-
-Các file kết quả của `Task_1-1` và `Task_1-2` được lưu tại:
-
-```text
-results/Task_1-1.csv
-results/Task_1-2.csv
-```
-
-Kiểm tra nhanh:
-
-```bash
-tree results
-head results/Task_1-1.csv
-head results/Task_1-2.csv
-```
-
-### Task 1-1 Output Format
-
-```csv
-State,TargetDate,MostBoughtSize,Count
-ANDAMAN & NICOBAR,04-02-22,M,1
-ANDHRA PRADESH,04-02-22,M,41
-...
-```
-
-### Task 1-2 Output Format
-
-```csv
-Month,State,MedianVariety
-2022-03,ANDHRA PRADESH,1.0
-2022-04,MAHARASHTRA,3.5
-...
-```
-
-### Task 2-1 Output Format
-
-Định dạng xuất ra là một file Parquet duy nhất, gồm 2 cột:
-
-```text
-City,
-Percentage_Qualified_Cancelled_Standard
-```
-
-### Task 2-2 Output Format
-
-Định dạng file xuất ra là Parquet dạng wide format, bao gồm 15 cột:
-
-```text
-SKU,
-Month,
-total_orders,
-threshold_p80_approx,
-threshold_p90_approx,
-orders_p80_approx,
-orders_p90_approx,
-stddev_p80_approx,
-stddev_p90_approx,
-threshold_p80_exact,
-threshold_p90_exact,
-orders_p80_exact,
-orders_p90_exact,
-stddev_p80_exact,
-stddev_p90_exact
-```
-
-## QUY TRÌNH TỰ ĐỘNG HÓA: BUILD & RUN ALL
-
-Dự án cung cấp script `build_and_run_all.sh` để tự động hóa quy trình chạy `Task_1-1`, `Task_1-2`, `Task_2-1` và `Task_2-2`.
-
-Script này thực hiện các bước:
-
-1. Chuẩn bị dữ liệu input trên HDFS.
-2. Biên dịch mã nguồn Scala.
-3. Đóng gói file JAR.
-4. Chạy Hadoop MapReduce job cho `Task_1-1`, `Task_1-2` và Spark job cho `Task_2-1`, `Task_2-2`.
-5. Trích xuất kết quả cuối cùng từ HDFS về thư mục `results/` và log về thư mục `logs/`.
-
-Các file kết quả sau khi chạy script:
+Kết quả sau khi chạy thành công:
 
 ```text
 results/Task_1-1.csv
@@ -449,85 +177,389 @@ results/Task_2-2.parquet
 logs/task_2-2_stats.log
 ```
 
-### 1. Cấp quyền thực thi
-
-Chỉ cần thực hiện một lần:
-
-```bash
-chmod +x build_and_run_all.sh
-```
-
-### 2. Chạy script
-
-```bash
-./build_and_run_all.sh
-```
-
-### 3. Kiểm tra kết quả
+Kiểm tra kết quả:
 
 ```bash
 tree results
 head results/Task_1-1.csv
 head results/Task_1-2.csv
-ls results/Task_2-1.parquet
-ls results/Task_2-2.parquet
+ls -lh results/Task_2-1.parquet
+ls -lh results/Task_2-2.parquet
 cat logs/task_2-2_stats.log
 ```
 
-## QUY TRÌNH BENCHMARK
+## 7. Chạy benchmark
 
-Dự án cung cấp script `benchmark_all.sh` để đo thời gian thực thi cho các task hiện có.
-
-Ở phiên bản hiện tại, script benchmark hỗ trợ:
-
-- `Task_1-1`: Sliding Window
-- `Task_1-2`: Median Variety
-- `Task_2-1`: Cancelled Standard Order Qualification Percentage
-
-Mỗi task được chạy 5 lần. Kết quả benchmark được lưu thành các file log JSON riêng biệt:
-
-```text
-logs/Task_1-1.json
-logs/Task_1-2.json
-logs/Task_2-1.json
-```
-
-Các file log chứa:
-
-- thời gian chạy từng lần;
-- thời gian trung bình;
-- độ lệch chuẩn;
-- thời gian nhỏ nhất;
-- thời gian lớn nhất;
-- thông tin main class và output path tương ứng.
-
-Benchmark chỉ đo thời gian thực thi job chính. Các bước biên dịch Scala, đóng gói JAR, chuẩn bị input HDFS, copy kết quả về local và xử lý hậu kỳ không được tính vào thời gian benchmark.
-
-### 1. Cấp quyền thực thi
-
-Chỉ cần thực hiện một lần:
+Cấp quyền thực thi:
 
 ```bash
 chmod +x benchmark_all.sh
 ```
 
-Hoặc cấp quyền cho cả hai script cùng lúc:
+Hoặc cấp quyền cho cả hai script:
 
 ```bash
 chmod +x build_and_run_all.sh benchmark_all.sh
 ```
 
-### 2. Chạy benchmark
+Chạy benchmark:
 
 ```bash
 ./benchmark_all.sh
 ```
 
-### 3. Kiểm tra file log benchmark
+Script benchmark sẽ chạy cả 4 task:
+
+```text
+Task_1-1
+Task_1-2
+Task_2-1
+Task_2-2
+```
+
+Mỗi task gồm:
+
+- 1 lần warm-up
+- 5 lần đo chính thức
+
+Warm-up được lưu riêng trong JSON, nhưng không được tính vào thống kê chính thức.
+
+Các file benchmark được tạo:
+
+```text
+logs/Task_1-1.json
+logs/Task_1-2.json
+logs/Task_2-1.json
+logs/Task_2-2.json
+```
+
+Kiểm tra benchmark:
 
 ```bash
 tree logs
 cat logs/Task_1-1.json
 cat logs/Task_1-2.json
 cat logs/Task_2-1.json
+cat logs/Task_2-2.json
 ```
+
+Benchmark chỉ đo thời gian chạy job chính. Các bước sau không được tính vào thời gian benchmark:
+
+- biên dịch Scala
+- đóng gói JAR
+- chuẩn bị input HDFS
+- copy output về local
+- xử lý hậu kỳ local
+
+## 8. Chạy riêng từng task nếu cần debug
+
+### 8.1. Task 1-1
+
+```bash
+cd ~/AI_Project/BigData-Lab03-AdvancedMR-Spark/src/Task_1-1
+
+export SCALA_LIBRARY_JAR="$SCALA_HOME/lib/scala-library.jar"
+export HADOOP_CLASSPATH="$(hadoop classpath):$SCALA_LIBRARY_JAR"
+
+mkdir -p classes
+rm -rf classes/*
+rm -f SlidingWindowJob.jar
+
+scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
+
+cd classes
+jar xf "$SCALA_LIBRARY_JAR"
+cd ..
+
+jar -cvf SlidingWindowJob.jar -C classes .
+
+hadoop fs -rm -r -f /lab03/output/task1-1
+
+hadoop jar SlidingWindowJob.jar lab03.SlidingWindowJob \
+  /lab03/input/Amazon_Sale_Report.csv \
+  /lab03/output/task1-1
+
+mkdir -p ../../results
+rm -f ../../results/Task_1-1.csv
+
+hadoop fs -getmerge /lab03/output/task1-1 ../../results/Task_1-1.csv
+sed -i '2,${/^State,TargetDate/d}' ../../results/Task_1-1.csv
+
+head ../../results/Task_1-1.csv
+
+cd ../..
+```
+
+### 8.2. Task 1-2
+
+```bash
+cd ~/AI_Project/BigData-Lab03-AdvancedMR-Spark/src/Task_1-2
+
+export SCALA_LIBRARY_JAR="$SCALA_HOME/lib/scala-library.jar"
+export HADOOP_CLASSPATH="$(hadoop classpath):$SCALA_LIBRARY_JAR"
+
+mkdir -p classes
+rm -rf classes/*
+rm -f MedianVarietyJob.jar
+
+scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
+
+cd classes
+jar xf "$SCALA_LIBRARY_JAR"
+cd ..
+
+jar -cvf MedianVarietyJob.jar -C classes .
+
+hadoop fs -rm -r -f /lab03/output/task1-2-temp
+hadoop fs -rm -r -f /lab03/output/task1-2
+
+hadoop jar MedianVarietyJob.jar lab03.MedianVarietyJob \
+  /lab03/input/Amazon_Sale_Report.csv \
+  /lab03/output/task1-2-temp \
+  /lab03/output/task1-2
+
+mkdir -p ../../results
+rm -f ../../results/Task_1-2.csv
+
+hadoop fs -getmerge /lab03/output/task1-2 ../../results/Task_1-2.csv
+sed -i '2,${/^Month,State/d}' ../../results/Task_1-2.csv
+
+head ../../results/Task_1-2.csv
+
+cd ../..
+```
+
+### 8.3. Task 2-1
+
+```bash
+cd ~/AI_Project/BigData-Lab03-AdvancedMR-Spark/src/Task_2-1
+
+export SCALA_LIBRARY_JAR="$SCALA_HOME/lib/scala-library.jar"
+export HADOOP_CLASSPATH="$(hadoop classpath):$SCALA_LIBRARY_JAR"
+export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
+export HDFS_URI="$(hdfs getconf -confKey fs.defaultFS)"
+export SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
+export SPARK_TASK21_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-1.parquet"
+
+mkdir -p classes
+rm -rf classes/*
+rm -f SparkTask21.jar
+
+scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
+jar -cvf SparkTask21.jar -C classes lab3
+
+hadoop fs -rm -r -f /lab03/output/Task_2-1.parquet
+hadoop fs -rm -r -f /lab03/output/Task_2-1.parquet_staging
+
+spark-submit \
+  --class lab3.task21.SparkTask21 \
+  --master local[*] \
+  --conf "spark.ui.showConsoleProgress=false" \
+  SparkTask21.jar \
+  "$SPARK_INPUT_PATH" \
+  "$SPARK_TASK21_OUTPUT_PATH"
+
+mkdir -p ../../results
+rm -rf ../../results/Task_2-1.parquet
+
+hadoop fs -get /lab03/output/Task_2-1.parquet ../../results/Task_2-1.parquet
+
+cd ../..
+```
+
+### 8.4. Task 2-2
+
+```bash
+cd ~/AI_Project/BigData-Lab03-AdvancedMR-Spark/src/Task_2-2
+
+export SCALA_LIBRARY_JAR="$SCALA_HOME/lib/scala-library.jar"
+export HADOOP_CLASSPATH="$(hadoop classpath):$SCALA_LIBRARY_JAR"
+export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
+export HDFS_URI="$(hdfs getconf -confKey fs.defaultFS)"
+export SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
+export SPARK_TASK22_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-2.parquet"
+
+mkdir -p classes
+rm -rf classes/*
+rm -f SparkTask22.jar
+
+scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
+jar -cvf SparkTask22.jar -C classes .
+
+hadoop fs -rm -r -f /lab03/output/Task_2-2.parquet
+hadoop fs -rm -r -f /lab03/output/Task_2-2.parquet_staging
+
+mkdir -p ../../logs
+
+spark-submit \
+  --class Task22 \
+  --master local[*] \
+  --conf "spark.ui.showConsoleProgress=false" \
+  SparkTask22.jar \
+  "$SPARK_INPUT_PATH" \
+  "$SPARK_TASK22_OUTPUT_PATH" \
+  2>&1 | tee ../../logs/task_2-2_stats.log
+
+mkdir -p ../../results
+rm -rf ../../results/Task_2-2.parquet
+
+hadoop fs -get /lab03/output/Task_2-2.parquet ../../results/Task_2-2.parquet
+
+cd ../..
+```
+
+## 9. Kiểm tra định dạng output
+
+### 9.1. Task 1-1
+
+```text
+State,TargetDate,MostBoughtSize,Count
+```
+
+Kiểm tra:
+
+```bash
+head results/Task_1-1.csv
+```
+
+### 9.2. Task 1-2
+
+```text
+Month,State,MedianVariety
+```
+
+Kiểm tra:
+
+```bash
+head results/Task_1-2.csv
+```
+
+### 9.3. Task 2-1
+
+Output là một file Parquet duy nhất:
+
+```text
+results/Task_2-1.parquet
+```
+
+### 9.4. Task 2-2
+
+Output là một file Parquet duy nhất:
+
+```text
+results/Task_2-2.parquet
+```
+
+File thống kê và log phân tích:
+
+```text
+logs/task_2-2_stats.log
+```
+
+## 10. Dọn dẹp file build tạm
+
+Xóa các file build local:
+
+```bash
+rm -rf src/Task_1-1/classes
+rm -rf src/Task_1-2/classes
+rm -rf src/Task_2-1/classes
+rm -rf src/Task_2-2/classes
+
+rm -f src/Task_1-1/SlidingWindowJob.jar
+rm -f src/Task_1-2/MedianVarietyJob.jar
+rm -f src/Task_2-1/SparkTask21.jar
+rm -f src/Task_2-2/SparkTask22.jar
+```
+
+Xóa file checksum `.crc` nếu có:
+
+```bash
+find . -name "*.crc" -type f -delete
+```
+
+Xóa Spark temp file nếu cần:
+
+```bash
+rm -rf /tmp/spark-*
+rm -rf /tmp/blockmgr-*
+```
+
+Xóa input và output HDFS cũ:
+
+```bash
+hadoop fs -rm -r -f /lab03/input
+hadoop fs -rm -r -f /lab03/output
+```
+
+## 11. Clean toàn bộ trước khi chạy lại hai script
+
+Chạy tại project root:
+
+```bash
+cd ~/AI_Project/BigData-Lab03-AdvancedMR-Spark
+
+rm -rf src/Task_1-1/classes src/Task_1-2/classes src/Task_2-1/classes src/Task_2-2/classes
+rm -f src/Task_1-1/SlidingWindowJob.jar
+rm -f src/Task_1-2/MedianVarietyJob.jar
+rm -f src/Task_2-1/SparkTask21.jar
+rm -f src/Task_2-2/SparkTask22.jar
+
+rm -rf results logs
+mkdir -p results logs
+
+find . -name "*.crc" -type f -delete
+rm -rf /tmp/spark-* /tmp/blockmgr-*
+
+hadoop fs -rm -r -f /lab03/input
+hadoop fs -rm -r -f /lab03/output
+```
+
+Kiểm tra môi trường:
+
+```bash
+java -version
+scala -version
+scalac -version
+spark-submit --version 2>&1 | grep -i scala
+hdfs getconf -confKey fs.defaultFS
+jps
+```
+
+Cấp quyền và chạy:
+
+```bash
+chmod +x build_and_run_all.sh benchmark_all.sh
+./build_and_run_all.sh
+./benchmark_all.sh
+```
+
+Sau khi chạy xong, kiểm tra:
+
+```bash
+tree results
+tree logs
+head results/Task_1-1.csv
+head results/Task_1-2.csv
+ls -lh results/Task_2-1.parquet
+ls -lh results/Task_2-2.parquet
+cat logs/Task_1-1.json
+cat logs/Task_1-2.json
+cat logs/Task_2-1.json
+cat logs/Task_2-2.json
+```
+
+## 12. Tắt Hadoop
+
+```bash
+stop-yarn.sh
+stop-dfs.sh
+```
+
+Kiểm tra:
+
+```bash
+jps
+```
+
+Nếu chỉ còn `Jps` hoặc không còn các tiến trình Hadoop chính, Hadoop đã được tắt.
