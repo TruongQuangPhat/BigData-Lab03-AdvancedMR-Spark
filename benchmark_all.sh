@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-
 RUNS=5
+WARMUP_RUNS=1
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$PROJECT_ROOT/logs"
@@ -12,67 +12,105 @@ INPUT_PATH="/lab03/input/Amazon_Sale_Report.csv"
 mkdir -p "$LOG_DIR"
 
 echo "============================================================"
-echo "CHUẨN BỊ MÔI TRƯỜNG BENCHMARK"
+echo "LAB 03 - BENCHMARK"
 echo "============================================================"
 
+# ============================================================
+# Resolve SPARK_HOME
+# ============================================================
+
 if [[ -n "${SPARK_HOME:-}" && -x "$SPARK_HOME/bin/spark-submit" ]]; then
-  echo "Sử dụng SPARK_HOME từ môi trường: $SPARK_HOME"
+  :
 
 elif [[ -x "/opt/spark/bin/spark-submit" ]]; then
   export SPARK_HOME="/opt/spark"
-  echo "Sử dụng SPARK_HOME: $SPARK_HOME"
 
 elif [[ -x "$HOME/spark/bin/spark-submit" ]]; then
   export SPARK_HOME="$HOME/spark"
-  echo "Sử dụng SPARK_HOME: $SPARK_HOME"
 
 elif command -v spark-submit >/dev/null 2>&1; then
   SPARK_SUBMIT_PATH="$(command -v spark-submit)"
   export SPARK_HOME="$(cd "$(dirname "$SPARK_SUBMIT_PATH")/.." && pwd)"
-  echo "Tự động phát hiện SPARK_HOME từ PATH: $SPARK_HOME"
 
 else
-  echo "LỖI: Không tìm thấy Spark."
-  echo "Vui lòng cài Spark hoặc cấu hình SPARK_HOME thủ công."
-  echo "Ví dụ:"
-  echo "  export SPARK_HOME=\$HOME/spark"
-  echo "  export PATH=\$SPARK_HOME/bin:\$SPARK_HOME/sbin:\$PATH"
+  echo "THẤT BẠI: Không tìm thấy Spark. Hãy cài Spark hoặc cấu hình SPARK_HOME."
   exit 1
 fi
 
 export PATH="$SPARK_HOME/bin:$SPARK_HOME/sbin:$PATH"
 
 if [[ ! -d "$SPARK_HOME/jars" ]]; then
-  echo "LỖI: SPARK_HOME đang là '$SPARK_HOME' nhưng không tìm thấy thư mục '$SPARK_HOME/jars'."
+  echo "THẤT BẠI: SPARK_HOME không hợp lệ: $SPARK_HOME"
   exit 1
 fi
 
+# ============================================================
+# Resolve HDFS URI
+# ============================================================
 
-HDFS_URI=$(hdfs getconf -confKey fs.defaultFS)
+HDFS_URI="$(hdfs getconf -confKey fs.defaultFS)"
 
 if [[ -z "$HDFS_URI" ]]; then
-  echo "LỖI: Không lấy được fs.defaultFS từ cấu hình Hadoop."
+  echo "THẤT BẠI: Không lấy được fs.defaultFS từ cấu hình Hadoop."
   exit 1
 fi
 
 SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
 SPARK_TASK21_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-1.parquet"
 
-echo "SPARK_HOME=$SPARK_HOME"
-echo "HDFS_URI=$HDFS_URI"
-echo "Spark input path: $SPARK_INPUT_PATH"
-echo "Spark Task 2-1 output path: $SPARK_TASK21_OUTPUT_PATH"
+export HADOOP_CLASSPATH="$(hadoop classpath):/usr/share/scala/lib/scala-library.jar"
+export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
 
-export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
-export SPARK_CLASSPATH=$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')
+# ============================================================
+# Prepare HDFS input
+# ============================================================
 
+if ! hadoop fs -mkdir -p /lab03/input/ >/dev/null 2>&1; then
+  echo "THẤT BẠI: Không tạo được thư mục input trên HDFS."
+  exit 1
+fi
 
-echo "============================================================"
-echo "CHUẨN BỊ DỮ LIỆU INPUT TRÊN HDFS"
-echo "============================================================"
+if ! hadoop fs -put -f "$PROJECT_ROOT/data/Amazon_Sale_Report.csv" /lab03/input/ >/dev/null 2>&1; then
+  echo "THẤT BẠI: Không upload được dữ liệu lên HDFS."
+  exit 1
+fi
 
-hadoop fs -mkdir -p /lab03/input/
-hadoop fs -put -f "$PROJECT_ROOT/data/Amazon_Sale_Report.csv" /lab03/input/
+echo "Chuẩn bị dữ liệu HDFS: THÀNH CÔNG"
+
+# ============================================================
+# Utility: measure one run silently
+# ============================================================
+
+measure_command() {
+  local label="$1"
+  local output_file="$2"
+  shift 2
+
+  local start_ns
+  local end_ns
+  local runtime
+
+  start_ns="$(date +%s%N)"
+
+  if "$@" >/dev/null 2>&1; then
+    end_ns="$(date +%s%N)"
+    runtime="$(python3 - <<PY
+start_ns = int("$start_ns")
+end_ns = int("$end_ns")
+print(round((end_ns - start_ns) / 1_000_000_000, 6))
+PY
+)"
+    echo "$runtime" >> "$output_file"
+    return 0
+  else
+    echo "THẤT BẠI: $label"
+    return 1
+  fi
+}
+
+# ============================================================
+# Utility: write benchmark result to JSON
+# ============================================================
 
 write_json_log() {
   local task_name="$1"
@@ -80,8 +118,9 @@ write_json_log() {
   local framework="$3"
   local input_path="$4"
   local output_path="$5"
-  local tmp_file="$6"
-  local log_file="$7"
+  local warmup_file="$6"
+  local tmp_file="$7"
+  local log_file="$8"
 
   python3 - <<PY
 import json
@@ -93,11 +132,20 @@ main_class = "$main_class"
 framework = "$framework"
 input_path = "$input_path"
 output_path = "$output_path"
+warmup_file = "$warmup_file"
 tmp_file = "$tmp_file"
 log_file = "$log_file"
 
-runs = []
+warmup = []
+with open(warmup_file, "r", encoding="utf-8") as f:
+    for idx, line in enumerate(f, start=1):
+        runtime = float(line.strip())
+        warmup.append({
+            "run": idx,
+            "runtime_seconds": runtime
+        })
 
+runs = []
 with open(tmp_file, "r", encoding="utf-8") as f:
     for idx, line in enumerate(f, start=1):
         runtime = float(line.strip())
@@ -107,33 +155,47 @@ with open(tmp_file, "r", encoding="utf-8") as f:
         })
 
 values = [item["runtime_seconds"] for item in runs]
+warmup_values = [item["runtime_seconds"] for item in warmup]
 
 result = {
     "task": task_name,
     "framework": framework,
     "benchmark_type": "job_runtime",
-    "description": "Benchmark only measures the execution time of the submitted job. Compilation, JAR packaging, HDFS input preparation, result copying, and local post-processing are excluded.",
+    "description": "Benchmark measures submitted job execution time. Warm-up runs are recorded separately and are not included in official statistics. Compilation, JAR packaging, HDFS input preparation, result copying, and local post-processing are excluded.",
     "input_path": input_path,
     "output_path": output_path,
     "main_class": main_class,
-    "number_of_runs": len(runs),
-    "runs": runs,
-    "statistics": {
-        "mean_seconds": round(statistics.mean(values), 6),
-        "stddev_seconds": round(statistics.stdev(values), 6) if len(values) >= 2 else 0.0,
-        "min_seconds": round(min(values), 6),
-        "max_seconds": round(max(values), 6)
+    "warmup": {
+        "number_of_runs": len(warmup),
+        "runs": warmup,
+        "statistics": {
+            "mean_seconds": round(statistics.mean(warmup_values), 6) if warmup_values else 0.0,
+            "min_seconds": round(min(warmup_values), 6) if warmup_values else 0.0,
+            "max_seconds": round(max(warmup_values), 6) if warmup_values else 0.0
+        },
+        "included_in_official_statistics": False
+    },
+    "measured": {
+        "number_of_runs": len(runs),
+        "runs": runs,
+        "statistics": {
+            "mean_seconds": round(statistics.mean(values), 6),
+            "stddev_seconds": round(statistics.stdev(values), 6) if len(values) >= 2 else 0.0,
+            "min_seconds": round(min(values), 6),
+            "max_seconds": round(max(values), 6)
+        }
     },
     "created_at": datetime.now().isoformat(timespec="seconds")
 }
 
 with open(log_file, "w", encoding="utf-8") as f:
     json.dump(result, f, indent=2, ensure_ascii=False)
-
-print(json.dumps(result, indent=2, ensure_ascii=False))
 PY
 }
 
+# ============================================================
+# Benchmark Task 1-1
+# ============================================================
 
 benchmark_task_1_1() {
   local TASK_NAME="Task_1-1"
@@ -141,51 +203,48 @@ benchmark_task_1_1() {
   local JAR_NAME="SlidingWindowJob.jar"
   local MAIN_CLASS="lab03.SlidingWindowJob"
   local OUTPUT_PATH="/lab03/output/task1-1"
+  local WARMUP_FILE="$LOG_DIR/task1_1_warmup.tmp"
   local TMP_FILE="$LOG_DIR/task1_1_times.tmp"
   local LOG_FILE="$LOG_DIR/Task_1-1.json"
 
-  echo "============================================================"
-  echo "BENCHMARK $TASK_NAME"
-  echo "============================================================"
+  echo "Đang benchmark $TASK_NAME..."
 
-  echo "--- Đang biên dịch và đóng gói $TASK_NAME ---"
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
 
-  cd "$SRC_DIR"
+  if ! (
+    cd "$SRC_DIR"
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+    scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
+    jar -cvf "$JAR_NAME" -C classes .
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - lỗi biên dịch hoặc đóng gói."
+    exit 1
+  fi
 
-  mkdir -p classes
-  rm -rf classes/*
-  rm -f "$JAR_NAME"
+  for i in $(seq 1 "$WARMUP_RUNS"); do
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
 
-  scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
-  jar -cvf "$JAR_NAME" -C classes . > /dev/null
+    measure_command \
+      "$TASK_NAME warm-up $i/$WARMUP_RUNS" \
+      "$WARMUP_FILE" \
+      hadoop jar "$SRC_DIR/$JAR_NAME" "$MAIN_CLASS" \
+        "$INPUT_PATH" \
+        "$OUTPUT_PATH"
+  done
 
-  cd "$PROJECT_ROOT"
+  hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
 
-  rm -f "$TMP_FILE"
+  for i in $(seq 1 "$RUNS"); do
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
 
-  for i in $(seq 1 "$RUNS")
-  do
-    echo "--- $TASK_NAME | Lần chạy $i/$RUNS ---"
-
-    hadoop fs -rm -r -f "$OUTPUT_PATH" > /dev/null 2>&1 || true
-
-    START_NS=$(date +%s%N)
-
-    hadoop jar "$SRC_DIR/$JAR_NAME" "$MAIN_CLASS" \
-      "$INPUT_PATH" \
-      "$OUTPUT_PATH"
-
-    END_NS=$(date +%s%N)
-
-    RUNTIME=$(python3 - <<PY
-start_ns = int("$START_NS")
-end_ns = int("$END_NS")
-print(round((end_ns - start_ns) / 1_000_000_000, 6))
-PY
-)
-
-    echo "$RUNTIME" >> "$TMP_FILE"
-    echo "$TASK_NAME | Lần chạy $i: $RUNTIME giây"
+    measure_command \
+      "$TASK_NAME lần chạy chính thức $i/$RUNS" \
+      "$TMP_FILE" \
+      hadoop jar "$SRC_DIR/$JAR_NAME" "$MAIN_CLASS" \
+        "$INPUT_PATH" \
+        "$OUTPUT_PATH"
   done
 
   write_json_log \
@@ -194,13 +253,18 @@ PY
     "Hadoop MapReduce" \
     "$INPUT_PATH" \
     "$OUTPUT_PATH" \
+    "$WARMUP_FILE" \
     "$TMP_FILE" \
     "$LOG_FILE"
 
-  rm -f "$TMP_FILE"
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
 
-  echo "Đã lưu log benchmark $TASK_NAME tại: $LOG_FILE"
+  echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_1-1.json"
 }
+
+# ============================================================
+# Benchmark Task 1-2
+# ============================================================
 
 benchmark_task_1_2() {
   local TASK_NAME="Task_1-2"
@@ -209,53 +273,53 @@ benchmark_task_1_2() {
   local MAIN_CLASS="lab03.MedianVarietyJob"
   local TEMP_PATH="/lab03/output/task1-2-temp"
   local OUTPUT_PATH="/lab03/output/task1-2"
+  local WARMUP_FILE="$LOG_DIR/task1_2_warmup.tmp"
   local TMP_FILE="$LOG_DIR/task1_2_times.tmp"
   local LOG_FILE="$LOG_DIR/Task_1-2.json"
 
-  echo "============================================================"
-  echo "BENCHMARK $TASK_NAME"
-  echo "============================================================"
+  echo "Đang benchmark $TASK_NAME..."
 
-  echo "--- Đang biên dịch và đóng gói $TASK_NAME ---"
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
 
-  cd "$SRC_DIR"
+  if ! (
+    cd "$SRC_DIR"
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+    scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
+    jar -cvf "$JAR_NAME" -C classes .
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - lỗi biên dịch hoặc đóng gói."
+    exit 1
+  fi
 
-  mkdir -p classes
-  rm -rf classes/*
-  rm -f "$JAR_NAME"
+  for i in $(seq 1 "$WARMUP_RUNS"); do
+    hadoop fs -rm -r -f "$TEMP_PATH" >/dev/null 2>&1 || true
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
 
-  scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
-  jar -cvf "$JAR_NAME" -C classes . > /dev/null
+    measure_command \
+      "$TASK_NAME warm-up $i/$WARMUP_RUNS" \
+      "$WARMUP_FILE" \
+      hadoop jar "$SRC_DIR/$JAR_NAME" "$MAIN_CLASS" \
+        "$INPUT_PATH" \
+        "$TEMP_PATH" \
+        "$OUTPUT_PATH"
+  done
 
-  cd "$PROJECT_ROOT"
+  hadoop fs -rm -r -f "$TEMP_PATH" >/dev/null 2>&1 || true
+  hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
 
-  rm -f "$TMP_FILE"
+  for i in $(seq 1 "$RUNS"); do
+    hadoop fs -rm -r -f "$TEMP_PATH" >/dev/null 2>&1 || true
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
 
-  for i in $(seq 1 "$RUNS")
-  do
-    echo "--- $TASK_NAME | Lần chạy $i/$RUNS ---"
-
-    hadoop fs -rm -r -f "$TEMP_PATH" > /dev/null 2>&1 || true
-    hadoop fs -rm -r -f "$OUTPUT_PATH" > /dev/null 2>&1 || true
-
-    START_NS=$(date +%s%N)
-
-    hadoop jar "$SRC_DIR/$JAR_NAME" "$MAIN_CLASS" \
-      "$INPUT_PATH" \
-      "$TEMP_PATH" \
-      "$OUTPUT_PATH"
-
-    END_NS=$(date +%s%N)
-
-    RUNTIME=$(python3 - <<PY
-start_ns = int("$START_NS")
-end_ns = int("$END_NS")
-print(round((end_ns - start_ns) / 1_000_000_000, 6))
-PY
-)
-
-    echo "$RUNTIME" >> "$TMP_FILE"
-    echo "$TASK_NAME | Lần chạy $i: $RUNTIME giây"
+    measure_command \
+      "$TASK_NAME lần chạy chính thức $i/$RUNS" \
+      "$TMP_FILE" \
+      hadoop jar "$SRC_DIR/$JAR_NAME" "$MAIN_CLASS" \
+        "$INPUT_PATH" \
+        "$TEMP_PATH" \
+        "$OUTPUT_PATH"
   done
 
   write_json_log \
@@ -264,13 +328,18 @@ PY
     "Hadoop MapReduce" \
     "$INPUT_PATH" \
     "$OUTPUT_PATH" \
+    "$WARMUP_FILE" \
     "$TMP_FILE" \
     "$LOG_FILE"
 
-  rm -f "$TMP_FILE"
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
 
-  echo "Đã lưu log benchmark $TASK_NAME tại: $LOG_FILE"
+  echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_1-2.json"
 }
+
+# ============================================================
+# Benchmark Task 2-1
+# ============================================================
 
 benchmark_task_2_1() {
   local TASK_NAME="Task_2-1"
@@ -278,55 +347,59 @@ benchmark_task_2_1() {
   local JAR_NAME="SparkTask21.jar"
   local MAIN_CLASS="lab3.task21.SparkTask21"
   local OUTPUT_PATH="/lab03/output/Task_2-1.parquet"
+  local WARMUP_FILE="$LOG_DIR/task2_1_warmup.tmp"
   local TMP_FILE="$LOG_DIR/task2_1_times.tmp"
   local LOG_FILE="$LOG_DIR/Task_2-1.json"
 
-  echo "============================================================"
-  echo "BENCHMARK $TASK_NAME"
-  echo "============================================================"
+  echo "Đang benchmark $TASK_NAME..."
 
-  echo "--- Đang biên dịch và đóng gói $TASK_NAME ---"
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
 
-  cd "$SRC_DIR"
+  if ! (
+    cd "$SRC_DIR"
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+    scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
+    jar -cvf "$JAR_NAME" -C classes lab3
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - lỗi biên dịch hoặc đóng gói."
+    exit 1
+  fi
 
-  mkdir -p classes
-  rm -rf classes/*
-  rm -f "$JAR_NAME"
+  for i in $(seq 1 "$WARMUP_RUNS"); do
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
+    hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" >/dev/null 2>&1 || true
 
-  scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
-  jar -cvf "$JAR_NAME" -C classes lab3 > /dev/null
+    measure_command \
+      "$TASK_NAME warm-up $i/$WARMUP_RUNS" \
+      "$WARMUP_FILE" \
+      spark-submit \
+        --class "$MAIN_CLASS" \
+        --master local[*] \
+        --conf "spark.ui.showConsoleProgress=false" \
+        "$SRC_DIR/$JAR_NAME" \
+        "$SPARK_INPUT_PATH" \
+        "$SPARK_TASK21_OUTPUT_PATH"
+  done
 
-  cd "$PROJECT_ROOT"
+  hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
+  hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" >/dev/null 2>&1 || true
 
-  rm -f "$TMP_FILE"
+  for i in $(seq 1 "$RUNS"); do
+    hadoop fs -rm -r -f "$OUTPUT_PATH" >/dev/null 2>&1 || true
+    hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" >/dev/null 2>&1 || true
 
-  for i in $(seq 1 "$RUNS")
-  do
-    echo "--- $TASK_NAME | Lần chạy $i/$RUNS ---"
-
-    hadoop fs -rm -r -f "$OUTPUT_PATH" > /dev/null 2>&1 || true
-    hadoop fs -rm -r -f "${OUTPUT_PATH}_staging" > /dev/null 2>&1 || true
-
-    START_NS=$(date +%s%N)
-
-    spark-submit \
-      --class "$MAIN_CLASS" \
-      --master local[*] \
-      "$SRC_DIR/$JAR_NAME" \
-      "$SPARK_INPUT_PATH" \
-      "$SPARK_TASK21_OUTPUT_PATH"
-
-    END_NS=$(date +%s%N)
-
-    RUNTIME=$(python3 - <<PY
-start_ns = int("$START_NS")
-end_ns = int("$END_NS")
-print(round((end_ns - start_ns) / 1_000_000_000, 6))
-PY
-)
-
-    echo "$RUNTIME" >> "$TMP_FILE"
-    echo "$TASK_NAME | Lần chạy $i: $RUNTIME giây"
+    measure_command \
+      "$TASK_NAME lần chạy chính thức $i/$RUNS" \
+      "$TMP_FILE" \
+      spark-submit \
+        --class "$MAIN_CLASS" \
+        --master local[*] \
+        --conf "spark.ui.showConsoleProgress=false" \
+        "$SRC_DIR/$JAR_NAME" \
+        "$SPARK_INPUT_PATH" \
+        "$SPARK_TASK21_OUTPUT_PATH"
   done
 
   write_json_log \
@@ -335,19 +408,18 @@ PY
     "Apache Spark" \
     "$SPARK_INPUT_PATH" \
     "$SPARK_TASK21_OUTPUT_PATH" \
+    "$WARMUP_FILE" \
     "$TMP_FILE" \
     "$LOG_FILE"
 
-  rm -f "$TMP_FILE"
+  rm -f "$WARMUP_FILE" "$TMP_FILE"
 
-  echo "Đã lưu log benchmark $TASK_NAME tại: $LOG_FILE"
+  echo "THÀNH CÔNG: $TASK_NAME -> logs/Task_2-1.json"
 }
 
-echo "============================================================"
-echo "LAB 03 - BENCHMARK TOÀN BỘ TASK HIỆN CÓ"
-echo "Số lần chạy mỗi task: $RUNS"
-echo "Thư mục lưu log: $LOG_DIR"
-echo "============================================================"
+# ============================================================
+# Main
+# ============================================================
 
 benchmark_task_1_1
 benchmark_task_1_2
@@ -355,7 +427,7 @@ benchmark_task_2_1
 
 echo "============================================================"
 echo "HOÀN TẤT BENCHMARK"
-echo "Các file log được tạo:"
+echo "Log benchmark:"
 echo "- logs/Task_1-1.json"
 echo "- logs/Task_1-2.json"
 echo "- logs/Task_2-1.json"

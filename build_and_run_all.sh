@@ -1,235 +1,293 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULT_DIR="$PROJECT_ROOT/results"
+LOG_DIR="$PROJECT_ROOT/logs"
+
+INPUT_PATH="/lab03/input/Amazon_Sale_Report.csv"
+
+mkdir -p "$RESULT_DIR" "$LOG_DIR"
 
 echo "============================================================"
-echo "CHUẨN BỊ MÔI TRƯỜNG BUILD & RUN"
+echo "LAB 03 - BUILD & RUN"
 echo "============================================================"
 
-mkdir -p results
+# ============================================================
+# Resolve SPARK_HOME
+# ============================================================
 
 if [[ -n "${SPARK_HOME:-}" && -x "$SPARK_HOME/bin/spark-submit" ]]; then
-  echo "Sử dụng SPARK_HOME từ biến môi trường: $SPARK_HOME"
+  :
 
 elif [[ -x "/opt/spark/bin/spark-submit" ]]; then
   export SPARK_HOME="/opt/spark"
-  echo "Sử dụng SPARK_HOME: $SPARK_HOME"
 
 elif [[ -x "$HOME/spark/bin/spark-submit" ]]; then
   export SPARK_HOME="$HOME/spark"
-  echo "Sử dụng SPARK_HOME: $SPARK_HOME"
 
 elif command -v spark-submit >/dev/null 2>&1; then
   SPARK_SUBMIT_PATH="$(command -v spark-submit)"
   export SPARK_HOME="$(cd "$(dirname "$SPARK_SUBMIT_PATH")/.." && pwd)"
-  echo "Tự động phát hiện SPARK_HOME từ PATH: $SPARK_HOME"
 
 else
-  echo "LỖI: Không tìm thấy Spark."
-  echo "Vui lòng cài Spark hoặc cấu hình SPARK_HOME thủ công."
-  echo "Ví dụ:"
-  echo "  export SPARK_HOME=\$HOME/spark"
-  echo "  export PATH=\$SPARK_HOME/bin:\$SPARK_HOME/sbin:\$PATH"
+  echo "THẤT BẠI: Không tìm thấy Spark. Hãy cài Spark hoặc cấu hình SPARK_HOME."
   exit 1
 fi
 
 export PATH="$SPARK_HOME/bin:$SPARK_HOME/sbin:$PATH"
 
 if [[ ! -d "$SPARK_HOME/jars" ]]; then
-  echo "LỖI: SPARK_HOME đang là '$SPARK_HOME' nhưng không tìm thấy thư mục '$SPARK_HOME/jars'."
+  echo "THẤT BẠI: SPARK_HOME không hợp lệ: $SPARK_HOME"
   exit 1
 fi
 
-HDFS_URI=$(hdfs getconf -confKey fs.defaultFS)
+# ============================================================
+# Resolve HDFS URI
+# ============================================================
+
+HDFS_URI="$(hdfs getconf -confKey fs.defaultFS)"
 
 if [[ -z "$HDFS_URI" ]]; then
-  echo "LỖI: Không lấy được fs.defaultFS từ cấu hình Hadoop."
+  echo "THẤT BẠI: Không lấy được fs.defaultFS từ cấu hình Hadoop."
   exit 1
 fi
-
-echo "SPARK_HOME=$SPARK_HOME"
-echo "HDFS_URI=$HDFS_URI"
-
-echo "============================================================"
-echo "CHUẨN BỊ DỮ LIỆU INPUT TRÊN HDFS"
-echo "============================================================"
-
-hadoop fs -mkdir -p /lab03/input/
-hadoop fs -put -f data/Amazon_Sale_Report.csv /lab03/input/
 
 SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
 SPARK_TASK21_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-1.parquet"
 SPARK_TASK22_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-2.parquet"
 
-echo "Spark input path: $SPARK_INPUT_PATH"
-echo "Spark Task 2-1 output path: $SPARK_TASK21_OUTPUT_PATH"
-echo "Spark Task 2-2 output path: $SPARK_TASK22_OUTPUT_PATH"
+export HADOOP_CLASSPATH="$(hadoop classpath):/usr/share/scala/lib/scala-library.jar"
+export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
 
-export HADOOP_CLASSPATH=$(hadoop classpath):/usr/share/scala/lib/scala-library.jar
-export SPARK_CLASSPATH=$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')
+# ============================================================
+# Prepare HDFS input
+# ============================================================
+
+if ! hadoop fs -mkdir -p /lab03/input/ >/dev/null 2>&1; then
+  echo "THẤT BẠI: Không tạo được thư mục input trên HDFS."
+  exit 1
+fi
+
+if ! hadoop fs -put -f "$PROJECT_ROOT/data/Amazon_Sale_Report.csv" /lab03/input/ >/dev/null 2>&1; then
+  echo "THẤT BẠI: Không upload được dữ liệu lên HDFS."
+  exit 1
+fi
+
+echo "THÀNH CÔNG: Chuẩn bị dữ liệu HDFS"
+
+# ============================================================
+# Task 1-1
+# ============================================================
+
+run_task_1_1() {
+  local TASK_NAME="Task_1-1"
+  local SRC_DIR="$PROJECT_ROOT/src/Task_1-1"
+  local JAR_NAME="SlidingWindowJob.jar"
+  local MAIN_CLASS="lab03.SlidingWindowJob"
+  local OUTPUT_PATH="/lab03/output/task1-1"
+  local LOCAL_OUTPUT="$RESULT_DIR/Task_1-1.csv"
+
+  echo "Đang chạy $TASK_NAME..."
+
+  if ! (
+    cd "$SRC_DIR"
+
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+
+    scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
+    jar -cvf "$JAR_NAME" -C classes .
+
+    hadoop fs -rm -r -f "$OUTPUT_PATH"
+
+    hadoop jar "$JAR_NAME" "$MAIN_CLASS" \
+      "$INPUT_PATH" \
+      "$OUTPUT_PATH"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME"
+    exit 1
+  fi
+
+  if ! (
+    rm -f "$LOCAL_OUTPUT"
+    hadoop fs -getmerge "$OUTPUT_PATH" "$LOCAL_OUTPUT"
+    sed -i '2,${/^State,TargetDate/d}' "$LOCAL_OUTPUT"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - không lấy được kết quả về local."
+    exit 1
+  fi
+
+  echo "THÀNH CÔNG: $TASK_NAME -> results/Task_1-1.csv"
+}
+
+# ============================================================
+# Task 1-2
+# ============================================================
+
+run_task_1_2() {
+  local TASK_NAME="Task_1-2"
+  local SRC_DIR="$PROJECT_ROOT/src/Task_1-2"
+  local JAR_NAME="MedianVarietyJob.jar"
+  local MAIN_CLASS="lab03.MedianVarietyJob"
+  local TEMP_PATH="/lab03/output/task1-2-temp"
+  local OUTPUT_PATH="/lab03/output/task1-2"
+  local LOCAL_OUTPUT="$RESULT_DIR/Task_1-2.csv"
+
+  echo "Đang chạy $TASK_NAME..."
+
+  if ! (
+    cd "$SRC_DIR"
+
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+
+    scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
+    jar -cvf "$JAR_NAME" -C classes .
+
+    hadoop fs -rm -r -f "$TEMP_PATH"
+    hadoop fs -rm -r -f "$OUTPUT_PATH"
+
+    hadoop jar "$JAR_NAME" "$MAIN_CLASS" \
+      "$INPUT_PATH" \
+      "$TEMP_PATH" \
+      "$OUTPUT_PATH"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME"
+    exit 1
+  fi
+
+  if ! (
+    rm -f "$LOCAL_OUTPUT"
+    hadoop fs -getmerge "$OUTPUT_PATH" "$LOCAL_OUTPUT"
+    sed -i '2,${/^Month,State/d}' "$LOCAL_OUTPUT"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - không lấy được kết quả về local."
+    exit 1
+  fi
+
+  echo "THÀNH CÔNG: $TASK_NAME -> results/Task_1-2.csv"
+}
+
+# ============================================================
+# Task 2-1
+# ============================================================
+
+run_task_2_1() {
+  local TASK_NAME="Task_2-1"
+  local SRC_DIR="$PROJECT_ROOT/src/Task_2-1"
+  local JAR_NAME="SparkTask21.jar"
+  local MAIN_CLASS="lab3.task21.SparkTask21"
+  local OUTPUT_PATH="/lab03/output/Task_2-1.parquet"
+  local STAGING_PATH="/lab03/output/Task_2-1.parquet_staging"
+  local LOCAL_OUTPUT="$RESULT_DIR/Task_2-1.parquet"
+
+  echo "Đang chạy $TASK_NAME..."
+
+  if ! (
+    cd "$SRC_DIR"
+
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+
+    scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
+    jar -cvf "$JAR_NAME" -C classes lab3
+
+    hadoop fs -rm -r -f "$OUTPUT_PATH"
+    hadoop fs -rm -r -f "$STAGING_PATH"
+
+    spark-submit \
+      --class "$MAIN_CLASS" \
+      --master local[*] \
+      --conf "spark.ui.showConsoleProgress=false" \
+      "$JAR_NAME" \
+      "$SPARK_INPUT_PATH" \
+      "$SPARK_TASK21_OUTPUT_PATH"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME"
+    exit 1
+  fi
+
+  if ! (
+    rm -rf "$LOCAL_OUTPUT"
+    hadoop fs -get "$OUTPUT_PATH" "$LOCAL_OUTPUT"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - không lấy được kết quả về local."
+    exit 1
+  fi
+
+  echo "THÀNH CÔNG: $TASK_NAME -> results/Task_2-1.parquet"
+}
+
+# ============================================================
+# Task 2-2
+# ============================================================
+
+run_task_2_2() {
+  local TASK_NAME="Task_2-2"
+  local SRC_DIR="$PROJECT_ROOT/src/Task_2-2"
+  local JAR_NAME="SparkTask22.jar"
+  local MAIN_CLASS="Task22"
+  local OUTPUT_PATH="/lab03/output/Task_2-2.parquet"
+  local STAGING_PATH="/lab03/output/Task_2-2.parquet_staging"
+  local LOCAL_OUTPUT="$RESULT_DIR/Task_2-2.parquet"
+  local STATS_LOG="$LOG_DIR/task_2-2_stats.log"
+
+  echo "Đang chạy $TASK_NAME..."
+
+  if ! (
+    cd "$SRC_DIR"
+
+    mkdir -p classes
+    rm -rf classes/*
+    rm -f "$JAR_NAME"
+
+    scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
+    jar -cvf "$JAR_NAME" -C classes .
+
+    hadoop fs -rm -r -f "$OUTPUT_PATH"
+    hadoop fs -rm -r -f "$STAGING_PATH"
+
+    spark-submit \
+      --class "$MAIN_CLASS" \
+      --master local[*] \
+      --conf "spark.ui.showConsoleProgress=false" \
+      "$JAR_NAME" \
+      "$SPARK_INPUT_PATH" \
+      "$SPARK_TASK22_OUTPUT_PATH"
+  ) > "$STATS_LOG" 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME. Xem chi tiết tại logs/task_2-2_stats.log"
+    exit 1
+  fi
+
+  if ! (
+    rm -rf "$LOCAL_OUTPUT"
+    hadoop fs -get "$OUTPUT_PATH" "$LOCAL_OUTPUT"
+  ) >/dev/null 2>&1; then
+    echo "THẤT BẠI: $TASK_NAME - không lấy được kết quả về local."
+    exit 1
+  fi
+
+  echo "THÀNH CÔNG: $TASK_NAME -> results/Task_2-2.parquet"
+  echo "THÀNH CÔNG: Log Task_2-2 -> logs/task_2-2_stats.log"
+}
+
+# ============================================================
+# Main
+# ============================================================
+
+run_task_1_1
+run_task_1_2
+run_task_2_1
+run_task_2_2
 
 echo "============================================================"
-echo "BUILD & RUN TASK 1-1: SLIDING WINDOW"
-echo "============================================================"
-
-cd src/Task_1-1
-
-echo "--- Đang biên dịch và đóng gói Task_1-1 ---"
-
-mkdir -p classes
-rm -rf classes/*
-rm -f SlidingWindowJob.jar
-
-scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
-jar -cvf SlidingWindowJob.jar -C classes .
-
-echo "--- Đang xóa output HDFS cũ của Task_1-1 nếu tồn tại ---"
-
-hadoop fs -rm -r -f /lab03/output/task1-1 > /dev/null 2>&1 || true
-
-echo "--- Đang chạy Hadoop MapReduce job cho Task_1-1 ---"
-
-hadoop jar SlidingWindowJob.jar lab03.SlidingWindowJob \
-  /lab03/input/Amazon_Sale_Report.csv \
-  /lab03/output/task1-1
-
-echo "--- Đang lấy kết quả Task_1-1 từ HDFS về thư mục results/ ---"
-
-mkdir -p ../../results
-rm -f ../../results/Task_1-1.csv
-
-hadoop fs -getmerge /lab03/output/task1-1 ../../results/Task_1-1.csv
-sed -i '2,${/^State,TargetDate/d}' ../../results/Task_1-1.csv
-
-echo "Đã lưu kết quả Task_1-1 tại: results/Task_1-1.csv"
-
-cd ../..
-
-echo "============================================================"
-echo "BUILD & RUN TASK 1-2: MEDIAN VARIETY"
-echo "============================================================"
-
-cd src/Task_1-2
-
-echo "--- Đang biên dịch và đóng gói Task_1-2 ---"
-
-mkdir -p classes
-rm -rf classes/*
-rm -f MedianVarietyJob.jar
-
-scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
-jar -cvf MedianVarietyJob.jar -C classes .
-
-echo "--- Đang xóa output HDFS cũ của Task_1-2 nếu tồn tại ---"
-
-hadoop fs -rm -r -f /lab03/output/task1-2-temp > /dev/null 2>&1 || true
-hadoop fs -rm -r -f /lab03/output/task1-2 > /dev/null 2>&1 || true
-
-echo "--- Đang chạy Hadoop MapReduce job cho Task_1-2 ---"
-
-hadoop jar MedianVarietyJob.jar lab03.MedianVarietyJob \
-  /lab03/input/Amazon_Sale_Report.csv \
-  /lab03/output/task1-2-temp \
-  /lab03/output/task1-2
-
-echo "--- Đang lấy kết quả Task_1-2 từ HDFS về thư mục results/ ---"
-
-mkdir -p ../../results
-rm -f ../../results/Task_1-2.csv
-
-hadoop fs -getmerge /lab03/output/task1-2 ../../results/Task_1-2.csv
-sed -i '2,${/^Month,State/d}' ../../results/Task_1-2.csv
-
-echo "Đã lưu kết quả Task_1-2 tại: results/Task_1-2.csv"
-
-cd ../..
-
-echo "============================================================"
-echo "BUILD & RUN TASK 2-1: SPARK STRUCTURED API"
-echo "============================================================"
-
-cd src/Task_2-1
-
-echo "--- Đang biên dịch và đóng gói Task_2-1 ---"
-
-mkdir -p classes
-rm -rf classes/*
-rm -f SparkTask21.jar
-
-scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-1.scala
-jar -cvf SparkTask21.jar -C classes lab3
-
-echo "--- Đang xóa output HDFS cũ của Task_2-1 nếu tồn tại ---"
-
-hadoop fs -rm -r -f /lab03/output/Task_2-1.parquet > /dev/null 2>&1 || true
-hadoop fs -rm -r -f /lab03/output/Task_2-1.parquet_staging > /dev/null 2>&1 || true
-
-echo "--- Đang chạy Spark job cho Task_2-1 ---"
-
-spark-submit \
-  --class lab3.task21.SparkTask21 \
-  --master local[*] \
-  SparkTask21.jar \
-  "$SPARK_INPUT_PATH" \
-  "$SPARK_TASK21_OUTPUT_PATH"
-
-echo "--- Đang lấy kết quả Task_2-1 từ HDFS về thư mục results/ ---"
-
-mkdir -p ../../results
-rm -rf ../../results/Task_2-1.parquet
-
-hadoop fs -get /lab03/output/Task_2-1.parquet ../../results/Task_2-1.parquet
-
-echo "Đã lưu kết quả Task_2-1 tại: results/Task_2-1.parquet"
-
-cd ../..
-
-echo "============================================================"
-echo "BUILD & RUN TASK 2-2: DYNAMIC PERCENTILE STDDEV"
-echo "============================================================"
-
-cd src/Task_2-2
-
-echo "--- Đang biên dịch và đóng gói Task_2-2 ---"
-
-mkdir -p classes
-rm -rf classes/*
-rm -f SparkTask22.jar
-
-scalac -classpath "$HADOOP_CLASSPATH:$SPARK_CLASSPATH" -d classes Task_2-2.scala
-jar -cvf SparkTask22.jar -C classes .
-
-echo "--- Đang xóa output HDFS cũ của Task_2-2 nếu tồn tại ---"
-
-hadoop fs -rm -r -f /lab03/output/Task_2-2.parquet > /dev/null 2>&1 || true
-hadoop fs -rm -r -f /lab03/output/Task_2-2.parquet_staging > /dev/null 2>&1 || true
-
-echo "--- Đang chạy Spark job cho Task_2-2 ---"
-
-mkdir -p ../../logs
-spark-submit \
-  --class Task22 \
-  --master local[*] \
-  SparkTask22.jar \
-  "$SPARK_INPUT_PATH" \
-  "$SPARK_TASK22_OUTPUT_PATH" 2>&1 | tee ../../logs/task_2-2_stats.log
-
-echo "--- Đang lấy kết quả Task_2-2 từ HDFS về thư mục results/ ---"
-
-mkdir -p ../../results
-rm -rf ../../results/Task_2-2.parquet
-
-hadoop fs -get /lab03/output/Task_2-2.parquet ../../results/Task_2-2.parquet
-
-echo "Đã lưu kết quả Task_2-2 tại: results/Task_2-2.parquet"
-echo "Đã lưu log chạy Task_2-2 tại: logs/task_2-2_stats.log"
-
-cd ../..
-
-echo "============================================================"
-echo "HOÀN TẤT BUILD VÀ CHẠY TOÀN BỘ PROJECT"
-echo "============================================================"
-echo "Kết quả được lưu tại:"
+echo "HOÀN TẤT BUILD & RUN"
+echo "Kết quả:"
 echo "- results/Task_1-1.csv"
 echo "- results/Task_1-2.csv"
 echo "- results/Task_2-1.parquet"
