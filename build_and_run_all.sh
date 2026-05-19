@@ -14,10 +14,6 @@ echo "============================================================"
 echo "LAB 03 - BUILD & RUN"
 echo "============================================================"
 
-# ============================================================
-# Resolve SPARK_HOME
-# ============================================================
-
 if [[ -n "${SPARK_HOME:-}" && -x "$SPARK_HOME/bin/spark-submit" ]]; then
   :
 
@@ -43,10 +39,6 @@ if [[ ! -d "$SPARK_HOME/jars" ]]; then
   exit 1
 fi
 
-# ============================================================
-# Resolve HDFS URI
-# ============================================================
-
 HDFS_URI="$(hdfs getconf -confKey fs.defaultFS)"
 
 if [[ -z "$HDFS_URI" ]]; then
@@ -58,12 +50,16 @@ SPARK_INPUT_PATH="${HDFS_URI}/lab03/input/Amazon_Sale_Report.csv"
 SPARK_TASK21_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-1.parquet"
 SPARK_TASK22_OUTPUT_PATH="${HDFS_URI}/lab03/output/Task_2-2.parquet"
 
-export HADOOP_CLASSPATH="$(hadoop classpath):/usr/share/scala/lib/scala-library.jar"
-export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
+SCALA_LIBRARY_JAR="${SCALA_HOME:-$(dirname "$(dirname "$(readlink -f "$(which scalac)")")")}/lib/scala-library.jar"
 
-# ============================================================
-# Prepare HDFS input
-# ============================================================
+if [[ ! -f "$SCALA_LIBRARY_JAR" ]]; then
+  echo "THẤT BẠI: Không tìm thấy scala-library.jar tương ứng với scalac hiện tại."
+  echo "SCALA_LIBRARY_JAR=$SCALA_LIBRARY_JAR"
+  exit 1
+fi
+
+export HADOOP_CLASSPATH="$(hadoop classpath):$SCALA_LIBRARY_JAR"
+export SPARK_CLASSPATH="$(find "$SPARK_HOME/jars" -name "*.jar" | tr '\n' ':')"
 
 if ! hadoop fs -mkdir -p /lab03/input/ >/dev/null 2>&1; then
   echo "THẤT BẠI: Không tạo được thư mục input trên HDFS."
@@ -76,10 +72,6 @@ if ! hadoop fs -put -f "$PROJECT_ROOT/data/Amazon_Sale_Report.csv" /lab03/input/
 fi
 
 echo "THÀNH CÔNG: Chuẩn bị dữ liệu HDFS"
-
-# ============================================================
-# Task 1-1
-# ============================================================
 
 run_task_1_1() {
   local TASK_NAME="Task_1-1"
@@ -99,6 +91,12 @@ run_task_1_1() {
     rm -f "$JAR_NAME"
 
     scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-1.scala
+
+    (
+      cd classes
+      jar xf "$SCALA_LIBRARY_JAR"
+    )
+
     jar -cvf "$JAR_NAME" -C classes .
 
     hadoop fs -rm -r -f "$OUTPUT_PATH"
@@ -123,10 +121,6 @@ run_task_1_1() {
   echo "THÀNH CÔNG: $TASK_NAME -> results/Task_1-1.csv"
 }
 
-# ============================================================
-# Task 1-2
-# ============================================================
-
 run_task_1_2() {
   local TASK_NAME="Task_1-2"
   local SRC_DIR="$PROJECT_ROOT/src/Task_1-2"
@@ -146,6 +140,12 @@ run_task_1_2() {
     rm -f "$JAR_NAME"
 
     scalac -classpath "$HADOOP_CLASSPATH" -d classes Task_1-2.scala
+
+    (
+      cd classes
+      jar xf "$SCALA_LIBRARY_JAR"
+    )
+
     jar -cvf "$JAR_NAME" -C classes .
 
     hadoop fs -rm -r -f "$TEMP_PATH"
@@ -171,10 +171,6 @@ run_task_1_2() {
 
   echo "THÀNH CÔNG: $TASK_NAME -> results/Task_1-2.csv"
 }
-
-# ============================================================
-# Task 2-1
-# ============================================================
 
 run_task_2_1() {
   local TASK_NAME="Task_2-1"
@@ -222,10 +218,6 @@ run_task_2_1() {
 
   echo "THÀNH CÔNG: $TASK_NAME -> results/Task_2-1.parquet"
 }
-
-# ============================================================
-# Task 2-2
-# ============================================================
 
 run_task_2_2() {
   local TASK_NAME="Task_2-2"
@@ -275,10 +267,6 @@ run_task_2_2() {
   echo "THÀNH CÔNG: $TASK_NAME -> results/Task_2-2.parquet"
   echo "THÀNH CÔNG: Log Task_2-2 -> logs/task_2-2_stats.log"
 }
-
-# ============================================================
-# Main
-# ============================================================
 
 run_task_1_1
 run_task_1_2
