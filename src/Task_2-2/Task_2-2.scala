@@ -64,6 +64,8 @@ object Task22 {
       .withColumnRenamed("Order ID", "Order_ID")
       .withColumnRenamed("promotion-ids", "promotion_ids")
 
+    // Chuẩn hóa kiểu ngày tháng, lấy cột Month và lọc bỏ các bản ghi có chứa giá trị Null
+    // Tính số lượng promotion (promo_count) dựa trên số lượng id phân cách bởi dấu phẩy
     val prepared = renamed
       .withColumn("OrderDate", to_date(col("Date"), "MM-dd-yy"))
       .withColumn("Month", month(col("OrderDate")))
@@ -96,6 +98,7 @@ object Task22 {
     // STEP 2 — Tính percentile threshold bằng 2 cách
     /*
      * Approach 1 — Approximate percentile.
+     * Sử dụng hàm percentile_approx tích hợp của Spark. 
      */
     def computeApprox(): DataFrame = {
       orders
@@ -117,6 +120,7 @@ object Task22 {
      * Threshold là promo_count nhỏ nhất sao cho cumulative frequency >= rank.
      */
     def computeExact(): DataFrame = {
+      // Đếm tần suất (số lượng đơn hàng) cho từng mức promo_count
       val counts = orders
         .groupBy("SKU", "Month", "promo_count")
         .agg(count(lit(1)).as("freq"))
@@ -128,6 +132,7 @@ object Task22 {
 
       val groupWindow = Window.partitionBy("SKU", "Month")
 
+      // Tính tần suất tích lũy (cum_freq) và rank cần đạt được cho ngưỡng 80% và 90%
       val cdf = counts
         .withColumn("cum_freq", sum(col("freq")).over(cdfWindow))
         .withColumn("n", sum(col("freq")).over(groupWindow))
@@ -160,6 +165,7 @@ object Task22 {
     var thresholdsApprox: DataFrame = null
     var thresholdsExact: DataFrame = null
 
+    // Cần unpersist trước mỗi lần chạy để đảm bảo Spark tính toán lại từ đầu thay vì lấy từ cache
     val timesApprox = (1 to N_RUNS).map { i =>
       if (thresholdsApprox != null) thresholdsApprox.unpersist(blocking = true)
 
@@ -212,6 +218,7 @@ object Task22 {
 
       val filtered = joined.filter(col("promo_count") >= col(thresholdCol))
 
+      // Nếu số đơn hàng đủ điều kiện < 2, độ lệch chuẩn vô nghĩa (gán = 0 ở bước sau)
       filtered
         .groupBy("SKU", "Month")
         .agg(
@@ -282,6 +289,8 @@ object Task22 {
 
     val joinCols = Seq("SKU", "Month")
 
+    // Nối các kết quả lại bằng Left Join để giữ toàn bộ SKU-Month
+    // Sau đó dùng .na.fill(0) cho các trường hợp không có đơn hàng nào thoả mãn threshold
     val finalDF = totalOrdersDF
       .join(threshApprox, joinCols, "inner")
       .join(threshExact, joinCols, "inner")
@@ -449,6 +458,7 @@ object Task22 {
       fs.delete(outputFile, true)
     }
 
+    // Gom dữ liệu về 1 partition để xuất ra đúng 1 file parquet duy nhất
     finalDF
       .repartition(1)
       .write
