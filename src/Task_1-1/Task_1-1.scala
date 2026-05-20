@@ -31,12 +31,6 @@ import scala.collection.mutable
  *    - Đếm tần suất xuất hiện của mỗi size
  *    - Chọn size có tần suất cao nhất
  *    - Output: State, TargetDate, MostBoughtSize, Count
- * 
- * CÁC VẤN ĐỀ XỬ LÝ DỮ LIỆU ĐÃ KHẮC PHỤC:
- * 1. State Inconsistency: Chuẩn hóa tên bang bằng .toUpperCase() để tránh "punjab" và "PUNJAB" 
- *    bị coi là 2 bang khác nhau
- * 2. CSV Output Format: Sử dụng comma separator thay vì tab mặc định của Hadoop
- * 3. Header Handling: Ghi header trong setup() thay vì dùng flag trong reduce()
  */
 object SlidingWindowJob {
   
@@ -56,25 +50,19 @@ object SlidingWindowJob {
       try {
         val line = value.toString
         
-        // Bỏ qua header CSV
         if (line.startsWith("index,Order ID")) return
         
         val fields = parseCSVLine(line)
-        
-        // Validate: Cần ít nhất 18 cột
+       
         if (fields.length < 18) return
         
-        // Extract các trường cần thiết
-        val dateStr = fields(2).trim        // Date (index 2)
-        val status = fields(3).trim         // Status (index 3)
-        val size = fields(10).trim          // Size (index 10)
-        val qtyStr = fields(13).trim        // Qty (index 13)
-        val stateRaw = fields(17).trim      // ship-state (index 17)
+        val dateStr = fields(2).trim        // Date
+        val status = fields(3).trim         // Status
+        val size = fields(10).trim          // Size
+        val qtyStr = fields(13).trim        // Qty
+        val stateRaw = fields(17).trim      // ship-state
         
-        // ===== DATA PREPROCESSING =====
-        
-        // [VẤN ĐỀ 1] Chuẩn hóa tên bang: .toUpperCase() để tránh inconsistency
-        // Ví dụ: "punjab", "PUNJAB", "Punjab" đều thành "PUNJAB"
+        // Chuẩn hóa tên bang .toUpperCase() để tránh inconsistency
         val state = stateRaw.toUpperCase
         
         // Điều kiện lọc 1: Status chứa "shipped" (case-insensitive)
@@ -90,25 +78,22 @@ object SlidingWindowJob {
         // Điều kiện lọc 4: Size không rỗng
         if (size.isEmpty) return
         
-        // Parse ngày tháng với error handling
+        // Parse ngày tháng
         val orderDate = try {
           dateFormat.parse(dateStr)
         } catch {
-          case _: Exception => return  // Skip invalid dates
+          case _: Exception => return
         }
         
-        // Tạo Calendar để tính toán ngày tương lai
         val cal = Calendar.getInstance()
         cal.setTime(orderDate)
         
         // Emit cho 7 ngày tương lai (D+1 đến D+7)
-        // Lý do: Đơn hàng ở ngày D sẽ nằm trong cửa sổ của các ngày D+1, D+2, ..., D+7
         for (i <- 1 to 7) {
           cal.setTime(orderDate)
           cal.add(Calendar.DAY_OF_MONTH, i)
           val targetDate = dateFormat.format(cal.getTime)
           
-          // Key format: "STATE_TargetDate" (ví dụ: "MAHARASHTRA_05-01-22")
           outKey.set(s"${state}_${targetDate}")
           outValue.set(size)
           context.write(outKey, outValue)
@@ -116,7 +101,6 @@ object SlidingWindowJob {
         
       } catch {
         case e: Exception => 
-          // Log error nhưng không crash job
           System.err.println(s"Error processing line: ${e.getMessage}")
       }
     }
@@ -133,7 +117,7 @@ object SlidingWindowJob {
       for (c <- line) {
         c match {
           case '"' => 
-            inQuotes = !inQuotes  // Toggle quote state
+            inQuotes = !inQuotes
           case ',' if !inQuotes =>
             result += current.toString
             current = new StringBuilder()
@@ -141,7 +125,7 @@ object SlidingWindowJob {
             current.append(c)
         }
       }
-      result += current.toString  // Thêm field cuối cùng
+      result += current.toString
       result.toArray
     }
   }
@@ -152,11 +136,9 @@ object SlidingWindowJob {
   class SlidingWindowReducer extends Reducer[Text, Text, Text, Text] {
     
     /**
-     * [VẤN ĐỀ 3] Ghi header trong setup() - đảm bảo header luôn ở đầu file
-     * Thay vì dùng flag isFirstRecord trong reduce() (không thread-safe và không elegant)
+     * Ghi header trong setup() - đảm bảo header luôn ở đầu file
      */
     override def setup(context: Reducer[Text, Text, Text, Text]#Context): Unit = {
-      // Ghi header CSV một lần duy nhất khi reducer khởi động
       context.write(new Text("State"), new Text("TargetDate,MostBoughtSize,Count"))
     }
     
@@ -174,7 +156,7 @@ object SlidingWindowJob {
           sizeCount(sizeStr) = sizeCount.getOrElse(sizeStr, 0) + 1
         }
         
-        // Tìm size có tần suất cao nhất (maxBy frequency)
+        // Tìm size có tần suất cao nhất
         if (sizeCount.nonEmpty) {
           val (mostBoughtSize, maxCount) = sizeCount.maxBy(_._2)
           
@@ -184,7 +166,7 @@ object SlidingWindowJob {
             val state = keyParts(0)
             val targetDate = keyParts(1)
             
-            // [VẤN ĐỀ 2] Output CSV format chuẩn với comma separator
+            // Output CSV format chuẩn với comma separator
             // Key: State, Value: TargetDate,MostBoughtSize,Count
             // Kết hợp với config "mapreduce.output.textoutputformat.separator" = ","
             // sẽ tạo output: State,TargetDate,MostBoughtSize,Count
@@ -213,27 +195,23 @@ object SlidingWindowJob {
     
     val conf = new Configuration()
     
-    // [VẤN ĐỀ 2] Thiết lập comma separator thay vì tab mặc định
+    // Thiết lập comma separator thay vì tab mặc định
     // Mặc định Hadoop dùng "\t" để phân cách key-value trong output
     // Ta ép dùng "," để tạo CSV chuẩn
     conf.set("mapreduce.output.textoutputformat.separator", ",")
     
     val job = Job.getInstance(conf, "Sliding Window - Most Bought Size by State")
     
-    // Thiết lập các class
     job.setJarByClass(this.getClass)
     job.setMapperClass(classOf[SlidingWindowMapper])
     job.setReducerClass(classOf[SlidingWindowReducer])
     
-    // Thiết lập kiểu dữ liệu output
     job.setOutputKeyClass(classOf[Text])
     job.setOutputValueClass(classOf[Text])
     
-    // Thiết lập input/output paths
     FileInputFormat.addInputPath(job, new Path(args(0)))
     FileOutputFormat.setOutputPath(job, new Path(args(1)))
     
-    // Tự động xóa output directory nếu đã tồn tại (tránh lỗi khi re-run)
     val fs = FileSystem.get(conf)
     val outputPath = new Path(args(1))
     if (fs.exists(outputPath)) {
@@ -241,7 +219,6 @@ object SlidingWindowJob {
       println(s"Deleted existing output directory: $outputPath")
     }
     
-    // Chạy job và exit với status code
     System.exit(if (job.waitForCompletion(true)) 0 else 1)
   }
 }

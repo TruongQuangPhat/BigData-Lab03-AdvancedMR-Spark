@@ -12,21 +12,13 @@ import scala.collection.mutable
 
 /**
  * BÀI 2: MEDIAN VARIETY - Độ đa dạng trung vị
- * =============================================
- * TỐI ƯU HÓA: GIẢM TỪ 3 JOBS XUỐNG 2 JOBS
- * * Ban đầu phân rã thành 3 bước logic:
- * (1) Lọc Style có size >= XXL
- * (2) Đếm Variety cho từng Style
- * (3) Tính Median
- * * Tối ưu: Gộp (1) + (2) thành Job 1 duy nhất
- * → Giảm 33% số jobs, scan data chỉ 1 lần
  */
 object MedianVarietyJob {
 
   val VALID_SIZES = Set("XXL", "3XL", "4XL", "5XL", "6XL")
 
   /**
-   * JOB 1 MAPPER: Emit TẤT CẢ đơn hàng hợp lệ (không vội lọc size)
+   * JOB 1 MAPPER: Emit TẤT CẢ đơn hàng hợp lệ
    */
   class Job1Mapper extends Mapper[LongWritable, Text, Text, Text] {
     private val outKey = new Text()
@@ -51,7 +43,7 @@ object MedianVarietyJob {
         val sizeRaw = fields(10).trim
         val stateRaw = fields(17).trim
 
-        // Chuẩn hóa State (In hoa toàn bộ để tránh lỗi phân mảnh)
+        // Chuẩn hóa State
         val state = stateRaw.toUpperCase
 
         // Validate dữ liệu
@@ -121,7 +113,6 @@ object MedianVarietyJob {
         // Cấu trúc 2: Biến cờ (kiểm tra xem có phục vụ size XXL+ hay không)
         var hasXXL = false
 
-        // Duyệt qua TẤT CẢ đơn hàng của Style này
         values.asScala.foreach { value =>
           val parts = value.toString.split("_", 2)
           if (parts.length == 2) {
@@ -140,7 +131,7 @@ object MedianVarietyJob {
         if (hasXXL && distinctSKUs.nonEmpty) {
           val varietyCount = distinctSKUs.size
           result.set(varietyCount)
-          context.write(key, result) // Hadoop sẽ tự động chèn dấu \t giữa Key và Value
+          context.write(key, result)
         }
 
       } catch {
@@ -169,7 +160,7 @@ object MedianVarietyJob {
       try {
         val line = value.toString.trim
 
-        // Tách chuỗi bằng dấu \t (Định dạng mặc định của Job 1 Output)
+        // Tách chuỗi bằng dấu \t
         val parts = line.split("\t")
         if (parts.length != 2) return
 
@@ -224,15 +215,14 @@ object MedianVarietyJob {
 
         java.util.Collections.sort(varieties)
 
-        // Tính Median
         val median = if (varieties.isEmpty) {
           0.0
         } else {
           val n = varieties.size()
           if (n % 2 == 0) {
-            (varieties.get(n/2 - 1).intValue() + varieties.get(n/2).intValue()) / 2.0 // Chẵn: Trung bình cộng 2 số giữa
+            (varieties.get(n/2 - 1).intValue() + varieties.get(n/2).intValue()) / 2.0
           } else {
-            varieties.get(n/2).doubleValue() // Lẻ: Số ở chính giữa
+            varieties.get(n/2).doubleValue()
           }
         }
 
@@ -241,7 +231,6 @@ object MedianVarietyJob {
           val month = keyParts(0)
           val state = keyParts(1)
 
-          // Ghi ra file với định dạng CSV (nhờ conf.set ở hàm main)
           context.write(
             new Text(month),
             new Text(s"${state},${median}")
